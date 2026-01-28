@@ -47,8 +47,13 @@ globals [
   possible-loan-types ; only short-term and long-term allowed
   computation-precision ; how many decimals are after the floating point
   default-max-banks-reached ; how many banks entered the default; if all of them are in default state, stop the execution of the program
-
 ]
+
+;; se va incerca vinderea creditelor acordate, pentru cresterea lichiditatii
+;; bail-in din partea altor banci
+;; bail-in lv1
+;; bail-in lv2
+;; bailouut
 
 turtles-own [
   has-started-contagion ; Exprima daca din cauza agentului curent a inceput contagiunea financiara
@@ -179,10 +184,10 @@ to setup-bank-distribution
   ask turtles [
     set color blue
     set size 2
-    ; Banks have different sizes, based on random normal distribution
+    ; Banks have different sizes, based on log-normal distribution
     ; with mean and standard deviation provided by the user
-    let powerOfEuler (random-normal mu sigma)
-    let raw-number exp powerOfEuler
+    ; * 100 only to avoid values such as 1.33, 0
+    let raw-number (abs(exp(random-normal mu sigma)) * 100)
     ifelse raw-number < 1
     [ set bank-size 1 ]
     [ set bank-size round raw-number ]
@@ -299,7 +304,12 @@ to reduce-interbankassets-of-borrower [default-bank non-default-bank]
   ask non-default-bank [
     let lossWeight [weight] of link-with default-bank
     let initial-interbank-assets interbank-assets
-    let updated-with-loss-interbank-assets (interbank-assets - lossWeight)
+    let updated-with-loss-interbank-assets 0
+    ifelse (interbank-assets > lossWeight)[
+      set updated-with-loss-interbank-assets (interbank-assets - lossWeight)
+    ][
+      set updated-with-loss-interbank-assets 0
+    ]
     print (word "      Bank " non-default-bank " reduces its interbank-assets: " initial-interbank-assets " -> " updated-with-loss-interbank-assets)
 
     set interbank-assets updated-with-loss-interbank-assets
@@ -525,7 +535,7 @@ to go
 
       ifelse (is-under-default-risk self)[
         print(word "       Is under default-risk? TRUE")
-         self
+        sell-granted-loans self
       ][
         print(word "       Is under default-risk? FALSE \n")
       ]
@@ -596,6 +606,18 @@ to-report is-under-default-risk [bank]
     ]
   ]
   report maybe-default
+end
+
+;;Fn ce verifica daca o banca este in criza de lichiditate (in acest nivel, va vinde creditele date pentru cresterea lichiditatii);;
+to-report is-under-liquidity-risk [bank]
+  let maybe-liquidity-risk false
+  ask bank [
+    if (liquid-assets - interbank-liabilities < 0) [
+      set maybe-liquidity-risk true
+    ]
+  ]
+
+  report maybe-liquidity-risk
 end
 
 ;;Fn helper care explica procesul de 'Asset Fire Sale';; Starea pietei este una RISCANTA.
@@ -690,109 +712,123 @@ to inspect-bank-loans-sent [bankAgent]
   ]
 end
 
+;; Fn ce cauta cumparator pentru imprumutul dintre BankA -> BankB, pentru o anumita suma. 'loan-to-sell' exprima '->'
+to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
+  print (word "         Potential buyers should have more than " for-amount " liquid assets to buy the loan from " loan-to-sell)
+  let bank-that-wants-to-sell [end1] of loan-to-sell
+  let bank-that-borrows [end2] of loan-to-sell
 
-to-report get-banks-loaned-by [d-bank]
+  let potential-buyers-agentset (turtles with [
+    color != red
+    and self != bank-that-wants-to-sell
+    and self != bank-that-borrows
+    and liquid-assets >= for-amount
+  ])
 
-  let loaned-to-agentset-list []
-  ask d-bank [ set loaned-to-agentset-list [self] of out-link-neighbors ]
-  report loaned-to-agentset-list
-end
+  print (word "         Potential-buyers: " [self] of potential-buyers-agentset)
 
-; D-bank -> connected-to-turtle
-to-report find-random-potential-buyer [d-bank connected-turtle]
-  let existing-weight weight-between d-bank connected-turtle
-  print (word "Buyers should have more than " existing-weight " liquid assets to buy")
-  let found-buyer nobody
-  ; Buyer should not be default already, or any of the link turtles!
-  let potential-buyers-agentset (turtles with [color != red and self != d-bank and self != connected-turtle])
-  let potential-buyers-list [self] of potential-buyers-agentset
-
-  print (word "########## Potential-buyers: " potential-buyers-list)
-  foreach shuffle potential-buyers-list [ p-buyer ->
-    if found-buyer = nobody [
-      ask p-buyer [
-        ifelse liquid-assets >= existing-weight [
-          let b-already-loaned-by-potential-agentset get-banks-loaned-by p-buyer
-          show (word "#### Potential buyer of the loan has already loaned out: " b-already-loaned-by-potential-agentset)
-
-          if not member? connected-turtle b-already-loaned-by-potential-agentset[
-            set found-buyer p-buyer
-          ]
-        ][
-          show ("Bank does not have enough liquid-assets to buy")
-        ]
-      ]
-    ]
+  ; Use any? to check if the agentset is empty
+  ifelse any? potential-buyers-agentset [
+    report one-of potential-buyers-agentset
+  ] [
+    report nobody
   ]
-
-  if found-buyer = nobody []
-
-  report found-buyer
 end
 
-to update-buyer-props [buyer toT amount]
+
+to update-buyer-of-loan [buyer to-subtract-amount to-add-amount]
   ask buyer [
-    set interbank-assets interbank-assets + amount
-    set liquid-assets liquid-assets - amount
+    print(word "          New props for buyer" buyer)
+    let initial-interbank-assets interbank-assets
+    let initial-liquid-assets liquid-assets
+
+    set interbank-assets interbank-assets + to-add-amount
+    set liquid-assets liquid-assets - to-subtract-amount
+
+    print (word "             Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
+    print (word "             Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
+
     set total-links total-links + 1
   ]
 end
 
-to set-new-link [fromT toT old-link]
-  let w [weight] of old-link
-  let ir [link-interest-rate] of old-link
-  let llt [link-loan-type] of old-link
+to update-seller-of-loan [seller to-subtract-amount to-add-amount]
+  ask seller [
+    print(word "          New props for seller" seller)
+    let initial-interbank-assets interbank-assets
+    let initial-liquid-assets liquid-assets
 
-  ; Update link's properties
-  ask fromT [
-    create-directed-edge-to toT
-    ask out-link-to toT [
+    ifelse (to-subtract-amount > interbank-assets)[
+      set interbank-assets 0
+    ][
+      set interbank-assets (interbank-assets - to-subtract-amount)
+    ]
+    set liquid-assets (liquid-assets + to-add-amount)
+
+    print (word "             Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
+    print (word "             Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
+
+    set total-links total-links - 1
+  ]
+end
+
+;; Fn responsabila pentru crearea unui arc nou intre banca ce cumpara imprumutul acordat de catre banca in riscul defaultului ([end1]) altei banci.
+to set-and-update-new-link [bank-that-buys-loan old-loan]
+  let w [weight] of old-loan
+  let ir [link-interest-rate] of old-loan
+  let llt [link-loan-type] of old-loan
+
+  let who-loaned [end2] of old-loan
+
+  ;; Actualizam/initializam arcul nou creat.
+  ask bank-that-buys-loan [
+    create-directed-edge-to who-loaned
+    ask out-link-to who-loaned [
       set shape "curved"
       set color green set weight w
       set link-interest-rate ir set link-loan-type llt
     ]
   ]
-
-  ; Update buyer properties
-  ask fromT [
-    set interbank-assets interbank-assets + w
-    set liquid-assets liquid-assets - (1 - discount-rate) * w
-    set total-links total-links + 1
-  ]
 end
 
-; Sell the loans granted by the d-bank
-to sell-granted-loans [d-bank]
-  ask d-bank [
+;; Fn responsabila pentru 'vanzarea' imprumuturilor bancii ce poate intra in default, in cautarea de lichiditate rapida ;;
+;;;;Aceasta vanzare va fi la o suma mai mica (%discount-rate) decat imprumutul acordat (weight);;
+to sell-granted-loans [potential-default-bank]
+  ask potential-default-bank [
     ask my-out-links [
-      let old-link self
-      let connected-turtle [end2] of self ; D-bank -> connected-turtle
+      ;; Daca banca curenta inca este in pericol de default, continuam sa vindem imprumuturi pentru cresterea lichiditatii
+      ifelse (is-under-default-risk potential-default-bank)[
+        print (word "       Still under default risk? TRUE")
+        ifelse ([color] of end2 != red)[
+          let amount-required-to-sell (weight - weight * buyer-discount-rate / 100)
+          print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: :" amount-required-to-sell)
 
-      ask connected-turtle [
-        if (color = red)[
-          print (word "##################" d-bank " selling the loan granted to a default turtle")]
-      ]
-      show (word "Trying to find buyer for " d-bank " -> " connected-turtle)
+          let buyer find-random-potential-buyer-for-loan self amount-required-to-sell
 
-      let buyer find-random-potential-buyer d-bank connected-turtle
-      let amount weight-between d-bank connected-turtle
+          ;; todo: daca se vinde imprumutul, trebuie actualizat cine vinde, cine cumpara;. sters din Map-ul de imprumuturi short/long.
+          ;; trebuie updatate valorile pentru cel care a vandut (liquid-assets), dar si cel care a cumparat (liquid-assets + many more)
+          ifelse buyer != nobody [
+            print (word "         Sold loan between " self " to " buyer)
 
-      ifelse buyer != nobody [
-        print (word "########## Buyer of the loan found!" buyer)
-        print (word "########## Old: " d-bank " -> "connected-turtle ";; New: " buyer " -> " connected-turtle)
-
-        ; TODO : make use of set-new-link method
-        ; Buyer should update; Receiver should update;
-        ; TODO: Maybe some metrics stating that loans have been bought.
-        ask buyer [
-          set-new-link buyer connected-turtle old-link
+            ;; Setam culoarea imprumutului care va fi 'vandut' cu galben
+            ask self[
+              set color yellow
+            ]
+            set-and-update-new-link buyer self
+            update-buyer-of-loan buyer amount-required-to-sell weight
+            update-seller-of-loan potential-default-bank weight amount-required-to-sell
+          ][
+            print (word "         No buyer found for loan " self)
+          ]
+        ][
+          set color red
+          print (word "       Cannot sell the " self " loan, as it's towards a default state bank. No one will buy this loan.")
         ]
       ][
-       print (word "########## No buyer found for the loan!")
+        print (word "       Still under default risk? FALS")
       ]
     ]
   ]
-  print ("")
 end
 
 to-report extract-weight-of-link [turtle1 linkDirection turtle2]
@@ -967,7 +1003,7 @@ INPUTBOX
 382
 287
 sigma
-3.0
+1.0
 1
 0
 Number
@@ -1014,7 +1050,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-6.0
+7.0
 1
 1
 NIL
@@ -1080,7 +1116,7 @@ buyer-discount-rate
 buyer-discount-rate
 10
 30
-12.0
+13.0
 1
 1
 NIL
