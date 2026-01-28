@@ -294,13 +294,15 @@ to push-to-sell-loans-list [default-bank]
   ]
 end
 
-to reduce-ibassets-of-borrower [d-bank non-d-bank]
-  ask non-d-bank [
-    let lossWeight [weight] of link-with d-bank
-    print (word "Turtle " non-d-bank " will lose " lossWeight " amount")
-    print (word "Initial interbank-assets: " interbank-assets)
-    set interbank-assets (interbank-assets - lossWeight)
-    print (word "Updated interbank-assets: " interbank-assets)
+;;Fn ce reduce activele interbancare ale altor banci, impactate de catre cea default, in functie de 'suma pe care cea default a contractat-o'
+to reduce-interbankassets-of-borrower [default-bank non-default-bank]
+  ask non-default-bank [
+    let lossWeight [weight] of link-with default-bank
+    let initial-interbank-assets interbank-assets
+    let updated-with-loss-interbank-assets (interbank-assets - lossWeight)
+    print (word "      Bank " non-default-bank " reduces its interbank-assets: " initial-interbank-assets " -> " updated-with-loss-interbank-assets)
+
+    set interbank-assets updated-with-loss-interbank-assets
   ]
 end
 
@@ -508,10 +510,21 @@ to go
   let visited-agentset-banks turtle-set visited-banks
   print(word "Visited banks: " visited-agentset-banks)
 
-  ;; We should exclude initialized default turtles or turtle that have been already visited
-  ask turtles with [not member? self visited-agentset-banks][ ; we should exclude default turtles that have been already visited
-    let bank-under-maybe-default-risk self
-    print bank-under-maybe-default-risk
+  ;; Verificam primii 'vecini' pentru a observa daca acestia sunt in risc de default, daca cel 'curent' a intrat in default.
+  ;; Se va verifica iterativ. Ex: A->B->C. tick1=vecinii lui B; tick2=vecinii lui C
+  ask turtles with [color = red and not member? self visited-agentset-banks][ ; we should exclude default turtles that have been already visited
+    let current-default-bank self
+
+    let all-default-bank-neighbors link-neighbors
+    print (word "   Current default bank " self " is connected to a total of: " all-default-bank-neighbors)
+
+    let banks-that-borrowed-default-one in-link-neighbors
+    print (word "    Check the banks that borrowed money to current default: " banks-that-borrowed-default-one "\n")
+    ask banks-that-borrowed-default-one [
+      reduce-interbankassets-of-borrower current-default-bank self
+      let is-default-risk is-under-default-risk self
+      print(word "       Is under default-risk? " is-default-risk "\n")
+    ]
 
 ;    let current-default-turtle self
 ;    set defaulted-this-iteration lput current-default-turtle defaulted-this-iteration
@@ -524,7 +537,7 @@ to go
 ;      let connected-turtle [end1] of self
 ;      print (word "Turtle: " current-default-turtle " owes money to: " connected-turtle)
 ;
-;      reduce-ibassets-of-borrower current-default-turtle connected-turtle
+;      reduce-interbankassets-of-borrower current-default-turtle connected-turtle
 ;      color-dbank-in-links current-default-turtle
 ;      check-if-defaults-other connected-turtle
 ;    ]
