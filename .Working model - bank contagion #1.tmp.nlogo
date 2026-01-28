@@ -24,6 +24,7 @@ links-own [
 
 globals [
   discount-rate
+  deposit-withdrawal-rate
   visited-banks
   already-default-banks
   buffer
@@ -47,15 +48,21 @@ globals [
   possible-loan-types ; only short-term and long-term allowed
   computation-precision ; how many decimals are after the floating point
   default-max-banks-reached ; how many banks entered the default; if all of them are in default state, stop the execution of the program
+
+  ;; Stari ale bancilor, in functie de bilantul acestora - bun, criza de lichiditate sau default.
+  STATE-HEALTHY
+  STATE-LIQUIDITY-CRISIS
+  STATE-DEFAULT
 ]
 
-;; se va incerca vinderea creditelor acordate, pentru cresterea lichiditatii
-;; bail-in din partea altor banci
+;; se va incerca vinderea creditelor acordate, pentru cresterea lichiditatii - in situatie de liquidity-crisis
+;; in situatie de solvency-crisis
 ;; bail-in lv1
 ;; bail-in lv2
 ;; bailouut
 
 turtles-own [
+  state
   has-started-contagion ; Exprima daca din cauza agentului curent a inceput contagiunea financiara
   will-be-in-default ; Exprima daca banca va intra in stare default in cadrul urmatoarelor tickuri. Daca da, o excludem din partea de imprumuturi etc. (la 'go')
   interbank-assets ; Activele interbancare
@@ -100,6 +107,11 @@ to setup-globals
   set already-default-banks []
   set rate-of-SME .1
   set rate-of-large-companies .01
+  set discount-rate (buyer-discount-rate / 100)
+  set deposit-withdrawal-rate (deposits-withdrawal-rate / 100)
+  set STATE-HEALTHY "HEALTHY"
+  set STATE-LIQUIDITY-CRISIS "LIQUIDITY-CRISIS"
+  set STATE-DEFAULT "DEFAULT"
 end
 
 to setup-bank-nonfinancial-states
@@ -109,6 +121,7 @@ to setup-bank-nonfinancial-states
   layout-circle turtles (max-pxcor - 1)
 
   ask turtles [
+    set state STATE-HEALTHY
     set has-started-contagion false
     set will-be-in-default false
     set reached-max-possible-connectivity false
@@ -150,9 +163,18 @@ to setup-network
       while [ (total-links < max-node-connectivity) and any? possible-turtles-to-connect ] [
         ask one-of possible-turtles-to-connect [
           let connect-turtle self
-          let link-direction one-of ["to" "from"]
 
-          ifelse (link-direction = "to")[
+          ;; Ratio este utilizabil doar in situatia determinarii probabilitatii cu care link A->B poate exista (daca nu, A<-B)
+          let size-ratio ([bank-size] of curr-bank / banks-max-size)
+
+          ;; Intrucat bancile mari dispun de un volum mai mare de bani,
+             ;; pentru a evita scenarii in care exista doar A(mare)->B(oarecare) in situatia bancilor mari, probabilitatea va fi de 80% sa aiba linkuri A->B.
+          ;; La fel si pentru bancile mici, care ar trebui sa contracteze imprumuturi cu o frecventa mai mare decat bancile mari (80% vs 20%)
+          ;; Cea mai mica banca are 20% sansa de link A->B
+          ;; Cea mai mare banca are 80% sansa de link A->B
+          let lending-probability (0.2 + (size-ratio * 0.6))
+
+          ifelse (random-float 1.0 < lending-probability)[
             ; bank -> connect-turtle
             print (word "    Create " curr-bank " -> " connect-turtle " link")
             ask curr-bank [ create-directed-edge-to connect-turtle ]
@@ -161,6 +183,7 @@ to setup-network
             print (word "    Create " curr-bank " <- " connect-turtle " link")
             ask curr-bank [ create-directed-edge-from connect-turtle]
           ]
+
           update-total-links connect-turtle
           set possible-turtles-to-connect (possible-turtles-to-connect with [self != connect-turtle])
           print(word "    Updated agentset to: " possible-turtles-to-connect)
@@ -186,11 +209,9 @@ to setup-bank-distribution
     set size 2
     ; Banks have different sizes, based on log-normal distribution
     ; with mean and standard deviation provided by the user
-    ; * 100 only to avoid values such as 1.33, 0
+    ; * 100 only to avoid values such as 1.33, 0.53 etc.
     let raw-number (abs(exp(random-normal mu sigma)) * 100)
-    ifelse raw-number < 1
-    [ set bank-size 1 ]
-    [ set bank-size round raw-number ]
+    set bank-size round raw-number
     set label bank-size
 
     if banks-max-size < bank-size
@@ -520,7 +541,7 @@ to go
   let visited-agentset-banks turtle-set visited-banks
   print(word "Visited banks: " visited-agentset-banks)
 
-  ;; Verificam primii 'vecini' pentru a observa daca acestia sunt in risc de default, daca cel 'curent' a intrat in default.
+  ;; Verificam  'vecini' pentru a observa daca acestia sunt in risc de default, daca cel 'curent' a intrat in default.
   ;; Se va verifica iterativ. Ex: A->B->C. tick1=vecinii lui B; tick2=vecinii lui C
   ask turtles with [color = red and not member? self visited-agentset-banks][ ; we should exclude default turtles that have been already visited
     let current-default-bank self
@@ -533,9 +554,27 @@ to go
     ask banks-that-borrowed-default-one [
       reduce-interbankassets-of-borrower current-default-bank self
 
+      ;; Verificare initiala impotriva unei eventuale crize de lichiditati
+      ifelse (is-under-liquidity-risk self)[
+        print(word "       Is under liquidity-risk? TRUE\n")
+        sell-granted-loans self
+      ][
+        print(word "       Is under liquidity-risk? FALSE \n")
+      ]
+
+      ;; Verificare ulterioara daca banca inca se afla in starea unei crize de lichiditati. Daca da, ii schimbam starea.
+      ifelse (is-under-liquidity-risk self)[
+        print (word "       Still under liquidity risk? TRUE")
+        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+      ][
+        print (word "       Still under liquidity risk? FALSE")
+        set-state-for-bank self STATE-HEALTHY
+      ]
+
+      ;; Solvency crisis check
       ifelse (is-under-default-risk self)[
         print(word "       Is under default-risk? TRUE")
-        sell-granted-loans self
+;        sell-granted-loans self
       ][
         print(word "       Is under default-risk? FALSE \n")
       ]
@@ -571,6 +610,23 @@ to go
  let defaulted-banks count turtles with [color = red]
  if defaulted-banks = number-of-banks [ set default-max-banks-reached true ]
  tick
+end
+
+to set-state-for-bank [bank to-state]
+  ifelse (to-state = STATE-HEALTHY or to-state = STATE-LIQUIDITY-CRISIS or to-state = STATE-DEFAULT)[
+    ask bank[
+      print(word "Changing bank state to " to-state)
+      if (to-state = STATE-HEALTHY)         [ set color blue ]
+      if (to-state = STATE-LIQUIDITY-CRISIS)[ set color orange ]
+      if (to-state = STATE-DEFAULT)         [ set color red ]
+
+      set state to-state
+    ]
+  ][
+    error "Incorrect state used for bank!"
+  ]
+
+
 end
 
 to-report find-paths [current path]
@@ -611,8 +667,11 @@ end
 ;;Fn ce verifica daca o banca este in criza de lichiditate (in acest nivel, va vinde creditele date pentru cresterea lichiditatii);;
 to-report is-under-liquidity-risk [bank]
   let maybe-liquidity-risk false
+
   ask bank [
-    if (liquid-assets - interbank-liabilities < 0) [
+    let immediate-deposit-demand (total-deposits * deposit-withdrawal-rate)
+
+    if (liquid-assets < (interbank-liabilities + immediate-deposit-demand) ) [
       set maybe-liquidity-risk true
     ]
   ]
@@ -657,9 +716,9 @@ to exogenous-shock
     ask one-of turtles with [color != red] [
       initial-default-setup-for self
       print ("######################")
-      let paths all-paths-from self
-      print (word "All paths are: " paths)
-      print (word "Longest path is: " longest-path paths)
+;      let paths all-paths-from self
+;      print (word "All paths are: " paths)
+;      print (word "Longest path is: " longest-path paths)
     ]
   ][
     print "No other banks can enter default state"
@@ -671,9 +730,9 @@ to biggest-size-exogenous-shock
     ask one-of turtles with [bank-size = banks-max-size and color != red] [
       initial-default-setup-for self
       print ("######################")
-      let paths all-paths-from self
-      print (word "All paths from MAX-BANK are: " paths)
-      print (word "Longest path is: " longest-path paths)
+;      let paths all-paths-from self
+;      print (word "All paths from MAX-BANK are: " paths)
+;      print (word "Longest path is: " longest-path paths)
     ]
   ][
     print "No banks with biggest size remaining that can enter default state"
@@ -685,9 +744,9 @@ to smallest-size-exogenous-shock
     ask one-of turtles with [bank-size = banks-min-size and color != red] [
       initial-default-setup-for self
       print ("######################")
-      let paths all-paths-from self
-      print (word "All paths from MIN-BANK are: " paths)
-      print (word "Longest path is: " longest-path paths)
+;      let paths all-paths-from self
+;      print (word "All paths from MIN-BANK are: " paths)
+;      print (word "Longest path is: " longest-path paths)
     ]
   ][
     print "No banks with smallest size remaining that can enter default state"
@@ -774,20 +833,34 @@ end
 
 ;; Fn responsabila pentru crearea unui arc nou intre banca ce cumpara imprumutul acordat de catre banca in riscul defaultului ([end1]) altei banci.
 to set-and-update-new-link [bank-that-buys-loan old-loan]
-  let w [weight] of old-loan
-  let ir [link-interest-rate] of old-loan
-  let llt [link-loan-type] of old-loan
-
   let who-loaned [end2] of old-loan
 
   ;; Actualizam/initializam arcul nou creat.
   ask bank-that-buys-loan [
-    create-directed-edge-to who-loaned
-    ask out-link-to who-loaned [
-      set shape "curved"
-      set color green set weight w
-      set link-interest-rate ir set link-loan-type llt
+
+    ;; Verificam daca deja exista un imprumut acordat de catre bank-that-buys-loan catre who-loaned
+    let existing-link out-link-to who-loaned
+
+    ;; Daca nu exista, creem arc nou cu vechile valori
+    ifelse (existing-link = nobody)[
+      create-directed-edge-to who-loaned
+      ask out-link-to who-loaned [
+        set shape "curved"
+        set color green
+        set weight ([weight] of old-loan)
+        set link-interest-rate ([link-interest-rate] of old-loan)
+        set link-loan-type ([link-loan-type] of old-loan)
+      ]
+    ][
+      ;; Daca exista, actualizam arcul curent cu noile valori
+      ask existing-link [
+        set weight (weight + [weight] of old-loan)
+        set color yellow ;; Highlight that this link grew
+        ;; Setam o medie a ratelor, pentru usurinta calculelor
+        set link-interest-rate ([link-interest-rate] of old-loan / link-interest-rate)
+      ]
     ]
+
   ]
 end
 
@@ -797,10 +870,10 @@ to sell-granted-loans [potential-default-bank]
   ask potential-default-bank [
     ask my-out-links [
       ;; Daca banca curenta inca este in pericol de default, continuam sa vindem imprumuturi pentru cresterea lichiditatii
-      ifelse (is-under-default-risk potential-default-bank)[
-        print (word "       Still under default risk? TRUE")
-        ifelse ([color] of end2 != red)[
-          let amount-required-to-sell (weight - weight * buyer-discount-rate / 100)
+      if (is-under-default-risk potential-default-bank)[
+
+        ifelse ([state] of end2 = STATE-HEALTHY)[
+          let amount-required-to-sell (weight - weight * discount-rate)
           print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: :" amount-required-to-sell)
 
           let buyer find-random-potential-buyer-for-loan self amount-required-to-sell
@@ -824,8 +897,6 @@ to sell-granted-loans [potential-default-bank]
           set color red
           print (word "       Cannot sell the " self " loan, as it's towards a default state bank. No one will buy this loan.")
         ]
-      ][
-        print (word "       Still under default risk? FALS")
       ]
     ]
   ]
@@ -933,7 +1004,7 @@ number-of-banks
 number-of-banks
 2
 80
-10.0
+16.0
 1
 1
 NIL
@@ -1118,6 +1189,21 @@ buyer-discount-rate
 30
 13.0
 1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+268
+150
+397
+183
+deposits-withdrawal-rate
+deposits-withdrawal-rate
+0
+100
+25.0
+5
 1
 NIL
 HORIZONTAL
