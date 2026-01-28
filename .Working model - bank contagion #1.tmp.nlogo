@@ -522,8 +522,13 @@ to go
     print (word "    Check the banks that borrowed money to current default: " banks-that-borrowed-default-one "\n")
     ask banks-that-borrowed-default-one [
       reduce-interbankassets-of-borrower current-default-bank self
-      let is-default-risk is-under-default-risk self
-      print(word "       Is under default-risk? " is-default-risk "\n")
+
+      ifelse (is-under-default-risk self)[
+        print(word "       Is under default-risk? TRUE")
+         self
+      ][
+        print(word "       Is under default-risk? FALSE \n")
+      ]
 
     ]
 
@@ -601,7 +606,7 @@ end
 ;;Recompensa este descrisa de 'discount-rate'. A(risc default)->B  => C->B (C a cumparat imprumutul la un pret mai 'mic')
 ;;Recompensa este cauzata de starea pietei, care este RISCANTA, avand in vedere faptul ca una dintre banci este in pragul de 'default'
 to fire-sell-loans [bank-with-default-risk]
-
+  print ("Inside fire-sell-loans")
 end
 
 to initial-default-setup-for [ default-agent ]
