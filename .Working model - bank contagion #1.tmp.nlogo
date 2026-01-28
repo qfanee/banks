@@ -621,7 +621,7 @@ to exogenous-shock
       print (word "Longest path is: " longest-path paths)
     ]
   ][
-    print "No other banks can enter default state"
+    print "No banks that can enter default state"
   ]
 end
 
