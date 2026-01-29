@@ -167,11 +167,12 @@ to setup-network
           ;; Ratio este utilizabil doar in situatia determinarii probabilitatii cu care link A->B poate exista (daca nu, A<-B)
           let size-ratio ([bank-size] of curr-bank / banks-max-size)
 
-          ;; Intrucat bancile mari dispun de un volum mai mare de bani,
+          ;; Intrucat bancile mari (core banks) dispun de un volum mai mare de bani,
              ;; pentru a evita scenarii in care exista doar A(mare)->B(oarecare) in situatia bancilor mari, probabilitatea va fi de 80% sa aiba linkuri A->B.
           ;; La fel si pentru bancile mici, care ar trebui sa contracteze imprumuturi cu o frecventa mai mare decat bancile mari (80% vs 20%)
           ;; Cea mai mica banca are 20% sansa de link A->B
           ;; Cea mai mare banca are 80% sansa de link A->B
+          ;; Frecventa cu care 'Core banks' imprumute 'smaller banks' este o situatie apropiata de realitate, decat vice versa ('small banks' sa imprumute mai des 'core banks')
           let lending-probability (0.2 + (size-ratio * 0.6))
 
           ifelse (random-float 1.0 < lending-probability)[
@@ -308,10 +309,6 @@ to distribute-interbank-assets [currentTurtle]
       ]
     ]
   ]
-end
-
-to-report all-paths-from [start-turtle]
-  report find-paths start-turtle (list start-turtle)
 end
 
 to push-to-sell-loans-list [default-bank]
@@ -541,7 +538,7 @@ to go
   let visited-agentset-banks turtle-set visited-banks
   print(word "Visited banks: " visited-agentset-banks)
 
-  ;; Verificam  'vecini' pentru a observa daca acestia sunt in risc de default, daca cel 'curent' a intrat in default.
+  ;; Verificam cei mai apropiati 'vecini' pentru a observa daca acestia sunt in risc de default, daca cel 'curent' a intrat in default.
   ;; Se va verifica iterativ. Ex: A->B->C. tick1=vecinii lui B; tick2=vecinii lui C
   ask turtles with [color = red and not member? self visited-agentset-banks][ ; we should exclude default turtles that have been already visited
     let current-default-bank self
@@ -569,6 +566,9 @@ to go
       ][
         print (word "       Still under liquidity risk? FALSE")
         set-state-for-bank self STATE-HEALTHY
+        ask my--links [
+          if ([end2] of
+        ]
       ]
 
       ;; Solvency crisis check
@@ -580,8 +580,6 @@ to go
       ]
 
     ]
-
-;    let current-default-turtle self
 ;    set defaulted-this-iteration lput current-default-turtle defaulted-this-iteration
 ;    set visited-banks lput current-default-turtle visited-banks
 ;
@@ -629,35 +627,13 @@ to set-state-for-bank [bank to-state]
 
 end
 
-to-report find-paths [current path]
-  let paths []
-  let nexts [ end2 ] of (links with [ end1 = current ])
-  let unvisited filter [ n -> not member? n path ] nexts
-  if empty? unvisited [
-    report (list path)
-  ]
-  foreach unvisited [ n ->
-    set paths sentence paths find-paths n (lput n path)
-  ]
-  report paths
-end
-
-to-report longest-path [paths]
-  if empty? paths [ report [] ]
-  let max-path first paths
-  foreach paths [ p ->
-    if (length p > length max-path) [
-      set max-path p
-    ]
-  ]
-  report max-path
-end
-
 ;;Fn ce verifica daca o banca este in riscul de default;;
 to-report is-under-default-risk [bank]
   let maybe-default false
   ask bank [
-    if (interbank-assets + illiquid-assets + liquid-assets + buffer - interbank-liabilities - total-deposits < 0) [
+    let total-assets (interbank-assets + illiquid-assets + liquid-assets + buffer)
+    let total-liabilities (interbank-liabilities + total-deposits)
+    if (total-assets < total-liabilities) [
       set maybe-default true
     ]
   ]
@@ -679,13 +655,6 @@ to-report is-under-liquidity-risk [bank]
   report maybe-liquidity-risk
 end
 
-;;Fn helper care explica procesul de 'Asset Fire Sale';; Starea pietei este una RISCANTA.
-;;Se incearca mitigarea unei eventuale stari de 'default';;
-;;Banca ce risca de a intra in default va incerca sa vanda imprumuturile pe care le-a acordat altor banci,
-      ;;pentru a dispune de lichiditate ca sa nu intre in 'default';;
-;;Intrucat bancile care nu sunt in 'prag' de default isi asuma riscul de a cumpara din imprumuturile bancii ce se afla in prag de default, vor fi 'recompensate'
-;;Recompensa este descrisa de 'discount-rate'. A(risc default)->B  => C->B (C a cumparat imprumutul la un pret mai 'mic')
-;;Recompensa este cauzata de starea pietei, care este RISCANTA, avand in vedere faptul ca una dintre banci este in pragul de 'default'
 to fire-sell-loans [bank-with-default-risk]
   print ("Inside fire-sell-loans")
 end
@@ -864,15 +833,22 @@ to set-and-update-new-link [bank-that-buys-loan old-loan]
   ]
 end
 
-;; Fn responsabila pentru 'vanzarea' imprumuturilor bancii ce poate intra in default, in cautarea de lichiditate rapida ;;
+;;Fn helper care explica procesul de 'Asset Fire Sale';; Starea pietei este una RISCANTA.
 ;;;;Aceasta vanzare va fi la o suma mai mica (%discount-rate) decat imprumutul acordat (weight);;
-to sell-granted-loans [potential-default-bank]
-  ask potential-default-bank [
+;;Se incearca mitigarea unei eventuale stari de 'criza de lichiditate';;
+;;Banca ce risca de a intra in criza de lichiditate va incerca sa vanda imprumuturile pe care le-a acordat altor banci,
+      ;;pentru a dispune de lichiditate ca sa nu intre in 'criza de lichiditate';;
+;;Intrucat bancile care nu sunt in 'prag' de criza lichiditate isi asuma riscul de a cumpara din imprumuturile bancii ce se afla in prag de criza lichiditate,
+      ;;vor fi 'recompensate'
+;;Recompensa este descrisa de 'discount-rate'. A(risc default)->B  => C->B (C a cumparat imprumutul la un pret mai 'mic')
+;;Recompensa este cauzata de starea pietei, care este RISCANTA, avand in vedere faptul ca una dintre banci este in pragul de 'criza de lichiditati'
+to sell-granted-loans [potential-liquidity-crisis-bank]
+  ask potential-liquidity-crisis-bank [
     ask my-out-links [
-      ;; Daca banca curenta inca este in pericol de default, continuam sa vindem imprumuturi pentru cresterea lichiditatii
-      if (is-under-default-risk potential-default-bank)[
+      ;; Daca banca curenta inca este in pericol de criza lichiditate/default, continuam sa vindem imprumuturi pentru cresterea lichiditatii
+      if (is-under-liquidity-risk potential-liquidity-crisis-bank)[
 
-        ifelse ([state] of end2 = STATE-HEALTHY)[
+        if ([state] of end2 = STATE-HEALTHY)[
           let amount-required-to-sell (weight - weight * discount-rate)
           print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: :" amount-required-to-sell)
 
@@ -889,13 +865,18 @@ to sell-granted-loans [potential-default-bank]
             ]
             set-and-update-new-link buyer self
             update-buyer-of-loan buyer amount-required-to-sell weight
-            update-seller-of-loan potential-default-bank weight amount-required-to-sell
+            update-seller-of-loan potential-liquidity-crisis-bank weight amount-required-to-sell
           ][
             print (word "         No buyer found for loan " self)
           ]
-        ][
+        ]
+        if ([state] of end2 = STATE-LIQUIDITY-CRISIS)[
+          set color orange
+          print (word "       Cannot sell the " self " loan, as it's towards a bank in liquidity-crisis state. There is a high chance for this bank to fail.")
+        ]
+        if ([state] of end2 = STATE-DEFAULT)[
           set color red
-          print (word "       Cannot sell the " self " loan, as it's towards a default state bank. No one will buy this loan.")
+          print (word "       Cannot sell the " self " loan, as it's towards a bank in default state. No one will buy this loan.")
         ]
       ]
     ]
