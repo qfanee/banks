@@ -781,46 +781,62 @@ to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
 end
 
 ;; Fn ce updateaza datele contabile ale cumparatorului unui imprumut (in caz de banca de la care cumpara este in fire-sell assets)
-to update-buyer-of-loan [buyer to-subtract-amount to-add-amount]
+to update-buyer-of-loan-copy [buyer amount-to-buy]
   ask buyer [
-    print(word "          New props for buyer" buyer)
     let initial-interbank-assets interbank-assets
     let initial-liquid-assets liquid-assets
+    let initial-equity equity
 
-    set interbank-assets interbank-assets + to-add-amount
-    set liquid-assets liquid-assets - to-subtract-amount
+    let price-bought-for (amount-to-buy * (1 - discount-rate) )
+    let equity-gains (amount-to-buy * discount-rate)
+
+    print(word "          New props for buyer" buyer)
+
+    set interbank-assets interbank-assets + amount-to-buy
+    set liquid-assets liquid-assets - price-bought-for
+    set equity (equity + equity-gains)
 
     print (word "             Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
     print (word "             Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
+    print (word "             Equity: " initial-equity " -> " equity)
 
     set total-links total-links + 1
   ]
 end
 
 ;; Fn ce updateaza datele contabile ale vanzatorului unui imprumut (in caz de fire-sell assets)
-to update-seller-of-loan [seller to-subtract-amount to-add-amount]
+to update-seller-of-loan-copy [seller amount-to-sell]
   ask seller [
-    ;; Scadem capitalul propriu al bancii (equity va acoperi suma care se pierde).
-    ;; Daca equity ar deveni negativ, banca este tehnic insolventa, deci va intra in default.
-    set equity (equity - to-subtract-amount)
-    ifelse (equity <= 0)[
-      set equi
-    ][
-
-    ]
-    print(word "          New props for seller" seller)
     let initial-interbank-assets interbank-assets
     let initial-liquid-assets liquid-assets
+    let initial-equity equity
 
-    ifelse (to-subtract-amount > interbank-assets)[
+    let price-sold-for (amount-to-sell * (1 - discount-rate))
+    let equity-loss ( * discount-rate)
+
+
+    ;; Scadem capitalul propriu al bancii (equity va acoperi suma care se pierde).
+    ;; Daca equity ar deveni negativ, banca este tehnic insolventa, deci va intra in default.
+    ;; Pierderea este absorbita de capitalul bancii
+    set equity (equity - equity-loss)
+    if (equity <= 0)[
+      set equity 0
+      set-state-for-bank self STATE-DEFAULT
+      print (word "          Bank " self " became insolvent due to fire-sale losses.")
+    ]
+
+    print(word "          New props for seller" seller)
+
+    ifelse (amount-to-sell > interbank-assets)[
       set interbank-assets 0
     ][
-      set interbank-assets (interbank-assets - to-subtract-amount)
+      set interbank-assets (interbank-assets - amount-to-sell)
     ]
-    set liquid-assets (liquid-assets + to-add-amount)
+    set liquid-assets (liquid-assets + price-sold-for)
 
     print (word "             Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
     print (word "             Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
+    print (word "             Equity: " initial-equity " -> " equity)
 
     set total-links total-links - 1
   ]
@@ -875,10 +891,10 @@ to sell-granted-loans [potential-liquidity-crisis-bank]
       if (is-under-liquidity-risk potential-liquidity-crisis-bank)[
 
         if ([state] of end2 = STATE-HEALTHY)[
-          let amount-required-to-sell (weight - weight * discount-rate)
-          print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: :" amount-required-to-sell)
+          let amount-required (weight - weight * discount-rate)
+          print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: :" amount-required)
 
-          let buyer find-random-potential-buyer-for-loan self amount-required-to-sell
+          let buyer find-random-potential-buyer-for-loan self amount-required
 
           ;; todo: daca se vinde imprumutul, trebuie actualizat cine vinde, cine cumpara;. sters din Map-ul de imprumuturi short/long.
           ;; trebuie updatate valorile pentru cel care a vandut (liquid-assets), dar si cel care a cumparat (liquid-assets + many more)
@@ -890,8 +906,8 @@ to sell-granted-loans [potential-liquidity-crisis-bank]
               set color yellow
             ]
             set-and-update-new-link buyer self
-            update-buyer-of-loan buyer amount-required-to-sell weight
-            update-seller-of-loan potential-liquidity-crisis-bank weight amount-required-to-sell
+            update-buyer-of-loan-copy buyer weight
+            update-seller-of-loan-copy potential-liquidity-crisis-bank weight
           ][
             print (word "         No buyer found for loan " self)
           ]
