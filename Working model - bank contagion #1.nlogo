@@ -587,8 +587,7 @@ to go
       ;; Solvency crisis check
       ifelse (is-under-default-risk self)[
         print(word "       Is under default-risk? TRUE")
-;        sell-granted-loans self
-;        set-state-for-bank self STATE-DEFAULT
+;        try-to-cascade-mitigate-default self
       ][
         print(word "       Is under default-risk? FALSE \n")
       ]
@@ -698,10 +697,6 @@ to exogenous-shock
   ifelse (any? turtles with [color != red])[
     ask one-of turtles with [color != red] [
       initial-default-setup-for self
-      print ("######################")
-;      let paths all-paths-from self
-;      print (word "All paths are: " paths)
-;      print (word "Longest path is: " longest-path paths)
     ]
   ][
     print "No other banks can enter default state"
@@ -712,10 +707,6 @@ to biggest-size-exogenous-shock
   ifelse (any? turtles with [bank-size = banks-max-size and color != red])[
     ask one-of turtles with [bank-size = banks-max-size and color != red] [
       initial-default-setup-for self
-      print ("######################")
-;      let paths all-paths-from self
-;      print (word "All paths from MAX-BANK are: " paths)
-;      print (word "Longest path is: " longest-path paths)
     ]
   ][
     print "No banks with biggest size remaining that can enter default state"
@@ -726,10 +717,6 @@ to smallest-size-exogenous-shock
   ifelse (any? turtles with [bank-size = banks-min-size and color != red])[
     ask one-of turtles with [bank-size = banks-min-size and color != red] [
       initial-default-setup-for self
-      print ("######################")
-;      let paths all-paths-from self
-;      print (word "All paths from MIN-BANK are: " paths)
-;      print (word "Longest path is: " longest-path paths)
     ]
   ][
     print "No banks with smallest size remaining that can enter default state"
@@ -781,7 +768,7 @@ to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
 end
 
 ;; Fn ce updateaza datele contabile ale cumparatorului unui imprumut (in caz de banca de la care cumpara este in fire-sell assets)
-to update-buyer-of-loan-copy [buyer amount-to-buy]
+to update-buyer-of-loan [buyer amount-to-buy]
   ask buyer [
     let initial-interbank-assets interbank-assets
     let initial-liquid-assets liquid-assets
@@ -805,7 +792,7 @@ to update-buyer-of-loan-copy [buyer amount-to-buy]
 end
 
 ;; Fn ce updateaza datele contabile ale vanzatorului unui imprumut (in caz de fire-sell assets)
-to update-seller-of-loan-copy [seller amount-to-sell]
+to update-seller-of-loan [seller amount-to-sell]
   ask seller [
     let initial-interbank-assets interbank-assets
     let initial-liquid-assets liquid-assets
@@ -906,8 +893,8 @@ to sell-granted-loans [potential-liquidity-crisis-bank]
               set color yellow
             ]
             set-and-update-new-link buyer self
-            update-buyer-of-loan-copy buyer weight
-            update-seller-of-loan-copy potential-liquidity-crisis-bank weight
+            update-buyer-of-loan buyer weight
+            update-seller-of-loan potential-liquidity-crisis-bank weight
           ][
             print (word "         No buyer found for loan " self)
           ]
