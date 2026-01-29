@@ -242,7 +242,6 @@ to setup-bank-financial-states
 
     ;; Calcularea capitalului bancii si necesarul de active pentru mentinerea active=pasive
     ;; Bazat pe Basel III - Capital Adequancy Ratio (8%) => 8% din active trebuie sa fie capitalul
-    ;; Pentru integritatea modelului, pentru a asigura ecuatia active=pasive, CAR-ul va fi luat din pasive.
     let capital-adequancy-ratio (8 / 100)
     let target-total-assets (total-liabilities / (1 - capital-adequancy-ratio) )
 
@@ -392,10 +391,20 @@ to check-if-defaults-other [non-d-bank]
   ]
 end
 
-to try-to-cascade-mitigate-default [potential-default-b]
-  ask potential-default-b [
+;;Fn helper ce descrie procesul de bail-in / bail-out
+;; 1st tier bail-in - bancile care m-au imprumutat vor fi afectate
+;; 2nd tier bail-in - depozitele curente vor fi afectate
+;; bailout - gov. intv.
+to try-to-cascade-mitigate-default [potential-default-bank]
+  ask potential-default-bank [
     let borrowers-bail-in true
     let max-amount-covered-by-res-funds 0.05 * (total-deposits + interbank-liabilities)
+
+    let net-worth (interbank-assets + illiquid-assets + liquid-assets + equity - interbank-liabilities - total-deposits)
+
+    if (net-worth < 0)[
+      print("##### NEGATIVE NET WORTH")
+    ]
 
     let required-bail-in-rate 0
     let required-amount abs (interbank-assets + illiquid-assets + liquid-assets + buffer - interbank-liabilities - total-deposits)
@@ -409,34 +418,34 @@ to try-to-cascade-mitigate-default [potential-default-b]
     ifelse (any? in-link-neighbors) [
       ask in-link-neighbors [
         let helping-neighbor self
-        if ( (can-b-bail-in-amount potential-default-b helping-neighbor required-bail-in-rate) = false)[
+        if ( (can-b-bail-in-amount potential-default-bank helping-neighbor required-bail-in-rate) = false)[
           set borrowers-bail-in false
         ]
       ]
     ] [ set borrowers-bail-in false ]
 
 ;     Apply 1st mechanism anti-default: Creditors (borrowers) bail-in. Update the required amount after done.
-    ifelse (borrowers-bail-in = true and is-under-default-risk potential-default-b = true) [
-      creditors-bail-in potential-default-b required-bail-in-rate
+    ifelse (borrowers-bail-in = true and is-under-default-risk potential-default-bank = true) [
+      creditors-bail-in potential-default-bank required-bail-in-rate
       set required-amount abs (interbank-assets + illiquid-assets + liquid-assets + buffer - interbank-liabilities - total-deposits)
     ][
       print ("  Mechanism 1 cannot be applied. Some of the creditors will enter in default if so.")
     ]
 
-    ; Apply 2nd step for bail-in - from uninsured deposits.  ; check if under the risk of default
-    if (is-under-default-risk potential-default-b = true)[
-      print ("  Mechanism 2. Bailing-in using the DEPOSITS.")
-      print (word "     Required amount from uninsured deposits: " required-amount)
-      deposits-bail-in potential-default-b required-amount
-      set required-amount abs (interbank-assets + illiquid-assets + liquid-assets + buffer - interbank-liabilities - total-deposits)
-    ]
-
-    ; Apply the 3rd step - resolution funds (gov. intervention)
-    if (is-under-default-risk potential-default-b = true) [
-      print ("  Mechanism 3. Using Resolution Funds (max. 5% of total liabilities)")
-      print (word "     Required amount from Resolution Funds: " required-amount)
-      apply-resolution-funds potential-default-b max-amount-covered-by-res-funds required-amount
-    ]
+;    ; Apply 2nd step for bail-in - from uninsured deposits.  ; check if under the risk of default
+;    if (is-under-default-risk potential-default-b = true)[
+;      print ("  Mechanism 2. Bailing-in using the DEPOSITS.")
+;      print (word "     Required amount from uninsured deposits: " required-amount)
+;      deposits-bail-in potential-default-b required-amount
+;      set required-amount abs (interbank-assets + illiquid-assets + liquid-assets + buffer - interbank-liabilities - total-deposits)
+;    ]
+;
+;    ; Apply the 3rd step - resolution funds (gov. intervention)
+;    if (is-under-default-risk potential-default-b = true) [
+;      print ("  Mechanism 3. Using Resolution Funds (max. 5% of total liabilities)")
+;      print (word "     Required amount from Resolution Funds: " required-amount)
+;      apply-resolution-funds potential-default-b max-amount-covered-by-res-funds required-amount
+;    ]
 
   ]
   print ("")
@@ -561,33 +570,33 @@ to go
     ask banks-that-borrowed-default-one [
       reduce-interbankassets-of-borrower current-default-bank self
 
-      ;; Verificare initiala impotriva unei eventuale crize de lichiditati
-      ifelse (is-under-liquidity-risk self)[
-        print(word "       Is under liquidity-risk? TRUE\n")
-        sell-granted-loans self
-      ][
-        print(word "       Is under liquidity-risk? FALSE \n")
-      ]
-
-      ;; Verificare ulterioara daca banca inca se afla in starea unei crize de lichiditati. Daca da, ii schimbam starea.
-      ifelse (is-under-liquidity-risk self)[
-        print (word "       Still under liquidity risk? TRUE")
-        set-state-for-bank self STATE-LIQUIDITY-CRISIS
-      ][
-        ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
-        print (word "       Still under liquidity risk? FALSE")
-        set-state-for-bank self STATE-HEALTHY
-        ask my-in-links [
-          if (color = orange) [
-            set color blue
-          ]
-        ]
-      ]
+;      ;; Verificare initiala impotriva unei eventuale crize de lichiditati
+;      ifelse (is-under-liquidity-risk self)[
+;        print(word "       Is under liquidity-risk? TRUE\n")
+;        sell-granted-loans self
+;      ][
+;        print(word "       Is under liquidity-risk? FALSE \n")
+;      ]
+;
+;      ;; Verificare ulterioara daca banca inca se afla in starea unei crize de lichiditati. Daca da, ii schimbam starea.
+;      ifelse (is-under-liquidity-risk self)[
+;        print (word "       Still under liquidity risk? TRUE")
+;        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+;      ][
+;        ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
+;        print (word "       Still under liquidity risk? FALSE")
+;        set-state-for-bank self STATE-HEALTHY
+;        ask my-in-links [
+;          if (color = orange) [
+;            set color blue
+;          ]
+;        ]
+;      ]
 
       ;; Solvency crisis check
       ifelse (is-under-default-risk self)[
         print(word "       Is under default-risk? TRUE")
-;        try-to-cascade-mitigate-default self
+        try-to-cascade-mitigate-default self
       ][
         print(word "       Is under default-risk? FALSE \n")
       ]
@@ -644,7 +653,7 @@ end
 to-report is-under-default-risk [bank]
   let maybe-default false
   ask bank [
-    let total-assets (interbank-assets + illiquid-assets + liquid-assets + buffer)
+    let total-assets (interbank-assets + illiquid-assets + liquid-assets)
     let total-liabilities (interbank-liabilities + total-deposits)
     if (total-assets < total-liabilities) [
       set maybe-default true
@@ -1014,7 +1023,7 @@ number-of-banks
 number-of-banks
 2
 80
-6.0
+10.0
 1
 1
 NIL
@@ -1131,7 +1140,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-3.0
+6.0
 1
 1
 NIL
