@@ -415,10 +415,10 @@ to try-to-cascade-mitigate-default [potential-default-bank]
 
       if (compute-net-worth potential-default-bank < 0)[
 
-        let net-worth (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
+        let current-net-worth (compute-net-worth potential-default-bank)
 
         let required-bail-in-rate 0
-        set amount-still-required-to-save abs(net-worth)
+        set amount-still-required-to-save abs(current-net-worth)
 
         ;; Pentru a nu scadea mai mult decat valoarea arcului, de aceea este necesara aceasta verificare.
         ;; Rata cu care fiecare arc va scadea, in functie de suma necesara. Ne vom raporta doar la interbank-liabilities, intrucat bancile care m-au imprumutat se raporteaza doar la acest param.
@@ -426,28 +426,23 @@ to try-to-cascade-mitigate-default [potential-default-bank]
         [ set required-bail-in-rate 1 ]
         [ set required-bail-in-rate (amount-still-required-to-save / interbank-liabilities) ]
 
-
-        ;; Apply 1st mechanism anti-default: Creditors (borrowers) bail-in. Update the required amount after done.
-        print(word "Amount required to be saved: " amount-still-required-to-save)
-        print(word "Total cash it may get from creditors: " interbank-liabilities)
+        ;; Aplicam primul mecanism anti-default. Bancile care m-au imprumutat vor face bail-in. Se actualizeaza suma care inca este necesara pentru acoperire.
+        print (word "     Proceeding to step 1 of bail-in - creditors. Required amount from creditors: " amount-still-required-to-save)
         creditors-bail-in potential-default-bank required-bail-in-rate
         set amount-still-required-to-save abs (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
+        set current-net-worth (compute-net-worth potential-default-bank)
+
+        ;; Daca inca este in risc de default dupa prima primul bail-in, continuam cu al2lea
+        if (is-under-default-risk potential-default-bank)[
+          set-state-for-bank potential-default-bank STATE-DEFAULT
+          print (word "ALERT!! " self " became default. " potential-default-bank)
+;          print (word "     Proceeding to step 2 of bail-in - deposits. Required amount from uninsured deposits: " amount-still-required-to-save)
+;          deposits-bail-in potential-default-bank amount-still-required-to-save
+;          set current-net-worth (compute-net-worth potential-default-bank)
+;          set amount-still-required-to-save abs(current-net-worth)
+        ]
       ]
     ]
-;
-;    print (word "Required amount to be saved: " required-amount)
-;
-;    ; If there are any potential banks that borrowed me
-;    ifelse (any? in-link-neighbors) [
-;      ask in-link-neighbors [
-;        let helping-neighbor self
-;        if ( (can-b-bail-in-amount potential-default-bank helping-neighbor required-bail-in-rate) = false)[
-;          set borrowers-bail-in false
-;        ]
-;      ]
-;    ] [ set borrowers-bail-in false ]
-
-
 
 ;    ; Apply 2nd step for bail-in - from uninsured deposits.  ; check if under the risk of default
 ;    if (is-under-default-risk potential-default-b = true)[
@@ -465,7 +460,6 @@ to try-to-cascade-mitigate-default [potential-default-bank]
 ;    ]
 
   ]
-  print ("")
 end
 
 to apply-resolution-funds [d res-fund-max-contribution required-amount]
@@ -503,24 +497,28 @@ end
 ;; Fn helper ce va scadea 'datoriile'(interbank-assets) ale bancii care risca sa intre in default cu o valoare de bailin-rate%
 ;; Aceasta fn va actualiza valorile arcelor afectate, equity si interbank-assetsurile bancii care au imprumutat banca in risc de default, dar si bancii care evita defaultul
 to creditors-bail-in [potential-default-bank bailin-rate]
-  print ("  Mechanism 1. Bailing-in using the CREDITORS.")
+  print (word "  Mechanism 1. Bailing-in " potential-default-bank " using the CREDITORS.")
   print (word "    Link loss rate: " bailin-rate)
-  print (word "      Bailing in bank: " potential-default-bank)
   ;; Actualizarea 'datoriilor' bancii ce se afla in prag de default, in urma procesului de bail-in
   ask potential-default-bank [
-
+    let amount-cancelled (interbank-liabilities * bailin-rate)
     let initial-interbank-liabilities interbank-liabilities
-    let liability-decrease (interbank-liabilities * (1 - bailin-rate))
-    set interbank-liabilities liability-decrease
-    set equity (equity + liability-decrease)
+    let initial-equity equity
+
+    set interbank-liabilities (interbank-liabilities - amount-cancelled)
+    set equity (equity + amount-cancelled)
     print (word "      Interbank liabilities: " initial-interbank-liabilities " -> " interbank-liabilities)
+    print (word "      Equity: " initial-equity " -> " equity)
   ]
 
   ;; Actualizarea 'activelor' bancilor (vecinilor) care au imprumutat banca ce se afla in risc de default
   ask in-link-neighbors [
-    let asset-loss 0
     print (word "    Bank " self " helps to bail:")
-    print (word "      Initial interbank-assets: " interbank-assets)
+
+    let asset-loss 0
+    let initial-interbank-assets interbank-assets
+    let initial-equity equity
+
     ;; Actualizarea arcului cu noua valoare.
     ask out-link-to potential-default-bank [
       set asset-loss (weight * bailin-rate)
@@ -530,11 +528,17 @@ to creditors-bail-in [potential-default-bank bailin-rate]
 
     set interbank-assets (interbank-assets - asset-loss)
     set equity (equity - asset-loss)
-    print (word "      Updated interbank-assets: " interbank-assets)
+    print (word "      Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
+    print (word "      Equity: " initial-equity " -> " equity)
+    if (is-with-negative-equity self)[
+      set-state-for-bank self STATE-DEFAULT
+      print (word "ALERT!! Contagion spread to " self " failed during bail-in of " potential-default-bank)
+    ]
   ]
 end
 
 to deposits-bail-in [potential-default-b required-amount]
+  print ("  Mechanism 2. Bailing-in using the DEPOSITS.")
   ask potential-default-b [
       print (word "     Uninsured large-companies amount: " large-companies-uninsured-deposits-volume)
       print (word "     Uninsured SME deposits amount: " sme-uninsured-deposits-volume)
@@ -600,28 +604,28 @@ to go
     ask banks-that-borrowed-default-one [
       reduce-interbankassets-of-borrower current-default-bank self
 
-;      ;; Verificare initiala impotriva unei eventuale crize de lichiditati
-;      ifelse (is-under-liquidity-risk self)[
-;        print(word "       Is under liquidity-risk? TRUE\n")
-;        sell-granted-loans self
-;      ][
-;        print(word "       Is under liquidity-risk? FALSE \n")
-;      ]
-;
-;      ;; Verificare ulterioara daca banca inca se afla in starea unei crize de lichiditati. Daca da, ii schimbam starea.
-;      ifelse (is-under-liquidity-risk self)[
-;        print (word "       Still under liquidity risk? TRUE")
-;        set-state-for-bank self STATE-LIQUIDITY-CRISIS
-;      ][
-;        ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
-;        print (word "       Still under liquidity risk? FALSE")
-;        set-state-for-bank self STATE-HEALTHY
-;        ask my-in-links [
-;          if (color = orange) [
-;            set color blue
-;          ]
-;        ]
-;      ]
+      ;; Verificare initiala impotriva unei eventuale crize de lichiditati
+      ifelse (is-under-liquidity-risk self)[
+        print(word "       Is under liquidity-risk? TRUE\n")
+        sell-granted-loans self
+      ][
+        print(word "       Is under liquidity-risk? FALSE \n")
+      ]
+
+      ;; Verificare ulterioara daca banca inca se afla in starea unei crize de lichiditati. Daca da, ii schimbam starea.
+      ifelse (is-under-liquidity-risk self)[
+        print (word "       Still under liquidity risk? TRUE")
+        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+      ][
+        ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
+        print (word "       Still under liquidity risk? FALSE")
+        set-state-for-bank self STATE-HEALTHY
+        ask my-in-links [
+          if (color = orange) [
+            set color blue
+          ]
+        ]
+      ]
 
       ;; Solvency crisis check
       ifelse (is-under-default-risk self)[
@@ -648,6 +652,7 @@ to go
 ;    ]
 
   ]
+  check-balance-sheet-for-all
 
   print(word "The following banks are defaulted: " already-default-banks ", so they cannot buy any loans")
   print(word "Defaulted-this-iteration: " defaulted-this-iteration)
@@ -679,6 +684,20 @@ to set-state-for-bank [bank to-state]
 
 end
 
+;; Fn ce verifica bilantul contabil la sfarsitul unui tick, pentru fiecare banca. Daca 'capitalurile proprii' sunt <0, inseamna ca banca nu
+to check-balance-sheet-for-all
+  ask turtles with [state != STATE-DEFAULT] [
+    ;; Recalculate the absolute truth of the balance sheet
+    let current-net-worth (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
+    set equity current-net-worth
+
+    if (equity < 0) [
+      set-state-for-bank self STATE-DEFAULT
+      print (word "!!! TERMINATED: Bank " self " finished the tick with negative equity: " equity)
+    ]
+  ]
+end
+
 ;;Fn ce verifica daca o banca este in riscul de default;;
 to-report is-under-default-risk [bank]
   let maybe-default false
@@ -705,6 +724,10 @@ to-report is-under-liquidity-risk [bank]
   ]
 
   report maybe-liquidity-risk
+end
+
+to-report is-with-negative-equity [bank]
+  report [equity] of bank < 0
 end
 
 to fire-sell-loans [bank-with-default-risk]
@@ -846,7 +869,6 @@ to update-seller-of-loan [seller amount-to-sell]
     ;; Pierderea este absorbita de capitalul bancii
     set equity (equity - equity-loss)
     if (equity <= 0)[
-      set equity 0
       set-state-for-bank self STATE-DEFAULT
       print (word "          Bank " self " became insolvent due to fire-sale losses.")
     ]
