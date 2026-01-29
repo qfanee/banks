@@ -391,6 +391,15 @@ to check-if-defaults-other [non-d-bank]
   ]
 end
 
+;;Fn helper ce calculeaza net-worth-ul bancii, facand abstractie de capitalurile proprii (equity).
+to-report compute-net-worth [bank]
+  let net-worth 0
+  ask bank[
+    set net-worth (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
+  ]
+  report net-worth
+end
+
 ;;Fn helper ce descrie procesul de bail-in / bail-out
 ;; 1st tier bail-in - bancile care m-au imprumutat vor fi afectate
 ;; 2nd tier bail-in - depozitele curente vor fi afectate
@@ -400,37 +409,45 @@ to try-to-cascade-mitigate-default [potential-default-bank]
     let borrowers-bail-in true
     let max-amount-covered-by-res-funds 0.05 * (total-deposits + interbank-liabilities)
 
-    let net-worth (interbank-assets + illiquid-assets + liquid-assets + equity - interbank-liabilities - total-deposits)
+    let amount-still-required-to-save 0
 
-    if (net-worth < 0)[
-      print("##### NEGATIVE NET WORTH")
-    ]
+    if (is-under-default-risk potential-default-bank)[
 
-    let required-bail-in-rate 0
-    let required-amount abs (interbank-assets + illiquid-assets + liquid-assets + buffer - interbank-liabilities - total-deposits)
+      if (compute-net-worth potential-default-bank < 0)[
 
-    ; If required amount > the liabilities (eg. loans taken), to not make creditors lose more money than they have borrowed, set this param. to 1
-    ifelse (required-amount > interbank-liabilities)[ set required-bail-in-rate 1 ][ set required-bail-in-rate (required-amount / interbank-liabilities) ]
+        let net-worth (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
 
-    print (word "Required amount to be saved: " required-amount)
+        let required-bail-in-rate 0
+        set amount-still-required-to-save abs(net-worth)
 
-    ; If there are any potential banks that borrowed me
-    ifelse (any? in-link-neighbors) [
-      ask in-link-neighbors [
-        let helping-neighbor self
-        if ( (can-b-bail-in-amount potential-default-bank helping-neighbor required-bail-in-rate) = false)[
-          set borrowers-bail-in false
-        ]
+        ;; Pentru a nu scadea mai mult decat valoarea arcului, de aceea este necesara aceasta verificare.
+        ;; Rata cu care fiecare arc va scadea, in functie de suma necesara. Ne vom raporta doar la interbank-liabilities, intrucat bancile care m-au imprumutat se raporteaza doar la acest param.
+        ifelse (amount-still-required-to-save > interbank-liabilities)
+        [ set required-bail-in-rate 1 ]
+        [ set required-bail-in-rate (amount-still-required-to-save / interbank-liabilities) ]
+
+
+        ;; Apply 1st mechanism anti-default: Creditors (borrowers) bail-in. Update the required amount after done.
+        print(word "Amount required to be saved: " amount-still-required-to-save)
+        print(word "Total cash it may get from creditors: " interbank-liabilities)
+        creditors-bail-in potential-default-bank required-bail-in-rate
+        set amount-still-required-to-save abs (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
       ]
-    ] [ set borrowers-bail-in false ]
-
-;     Apply 1st mechanism anti-default: Creditors (borrowers) bail-in. Update the required amount after done.
-    ifelse (borrowers-bail-in = true and is-under-default-risk potential-default-bank = true) [
-      creditors-bail-in potential-default-bank required-bail-in-rate
-      set required-amount abs (interbank-assets + illiquid-assets + liquid-assets + buffer - interbank-liabilities - total-deposits)
-    ][
-      print ("  Mechanism 1 cannot be applied. Some of the creditors will enter in default if so.")
     ]
+;
+;    print (word "Required amount to be saved: " required-amount)
+;
+;    ; If there are any potential banks that borrowed me
+;    ifelse (any? in-link-neighbors) [
+;      ask in-link-neighbors [
+;        let helping-neighbor self
+;        if ( (can-b-bail-in-amount potential-default-bank helping-neighbor required-bail-in-rate) = false)[
+;          set borrowers-bail-in false
+;        ]
+;      ]
+;    ] [ set borrowers-bail-in false ]
+
+
 
 ;    ; Apply 2nd step for bail-in - from uninsured deposits.  ; check if under the risk of default
 ;    if (is-under-default-risk potential-default-b = true)[
