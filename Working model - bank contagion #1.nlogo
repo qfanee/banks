@@ -750,7 +750,10 @@ to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
   let bank-that-borrows [end2] of loan-to-sell
 
   let potential-buyers-agentset (turtles with [
-    color != red
+    ;; Cumparatorul nu trebuie sa fie in risc de default
+    (is-under-default-risk self = false)
+    ;; Cumparatorul nu trebuie sa fie in risc de criza lichiditate
+    and (is-under-liquidity-risk self = false)
     and self != bank-that-wants-to-sell
     and self != bank-that-borrows
     and liquid-assets >= for-amount
@@ -766,7 +769,7 @@ to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
   ]
 end
 
-
+;; Fn ce updateaza datele contabile ale cumparatorului unui imprumut (in caz de banca de la care cumpara este in fire-sell assets)
 to update-buyer-of-loan [buyer to-subtract-amount to-add-amount]
   ask buyer [
     print(word "          New props for buyer" buyer)
@@ -783,6 +786,7 @@ to update-buyer-of-loan [buyer to-subtract-amount to-add-amount]
   ]
 end
 
+;; Fn ce updateaza datele contabile ale vanzatorului unui imprumut (in caz de fire-sell assets)
 to update-seller-of-loan [seller to-subtract-amount to-add-amount]
   ask seller [
     print(word "          New props for seller" seller)

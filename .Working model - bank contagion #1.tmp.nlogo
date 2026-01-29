@@ -564,10 +564,13 @@ to go
         print (word "       Still under liquidity risk? TRUE")
         set-state-for-bank self STATE-LIQUIDITY-CRISIS
       ][
+        ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
         print (word "       Still under liquidity risk? FALSE")
         set-state-for-bank self STATE-HEALTHY
-        ask my--links [
-          if ([end2] of
+        ask my-in-links [
+          if (color = orange) [
+            set color blue
+          ]
         ]
       ]
 
@@ -747,7 +750,9 @@ to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
   let bank-that-borrows [end2] of loan-to-sell
 
   let potential-buyers-agentset (turtles with [
-    color != red
+
+    (is-under-default-risk self = false)
+    and (is-under-liquidity-risk self = false)
     and self != bank-that-wants-to-sell
     and self != bank-that-borrows
     and liquid-assets >= for-amount
@@ -763,7 +768,7 @@ to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
   ]
 end
 
-
+;; Fn ce updateaza datele contabile ale cumparatorului unui imprumut (in caz de banca de la care cumpara este in fire-sell assets)
 to update-buyer-of-loan [buyer to-subtract-amount to-add-amount]
   ask buyer [
     print(word "          New props for buyer" buyer)
@@ -780,6 +785,7 @@ to update-buyer-of-loan [buyer to-subtract-amount to-add-amount]
   ]
 end
 
+;; Fn ce updateaza datele contabile ale vanzatorului unui imprumut (in caz de fire-sell assets)
 to update-seller-of-loan [seller to-subtract-amount to-add-amount]
   ask seller [
     print(word "          New props for seller" seller)
