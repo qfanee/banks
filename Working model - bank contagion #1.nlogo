@@ -73,6 +73,7 @@ turtles-own [
   large-companies-uninsured-deposits-volume ; Volume of deposits >= 100k, for large companies (1st for bail-in), that is not insured (subpart of deposits)
   insured-deposits ; Volume of deposits < 100k, that are insured and cannot be used for bail-in. (subpart of deposits)
   total-deposits ; Depozite bancare
+  equity ; Capitalul bancii
   bank-size ; Dimensiunea bancii, luand in considerare anumiti indicatori financiari, precum CA
   reached-max-possible-connectivity ; A/F, daca conectivitatea bancii a fost atinsa
   max-node-connectivity ; Conectivitatea maxima a unei banci
@@ -228,47 +229,56 @@ to setup-bank-financial-states
   ask turtles [
     print ("")
     print (word "START setup for " self)
-    ; Set the interbank assets if B1 -> B2
-    let currentTurtle self
 
-    ; self -> bank
+    ;;;;;; Initializarea pasivelor, avand in vedere cate imprumuturi a contractat banca curenta
+    ;; self <- bank
+    let number-of-ins count (my-in-links)
+    set interbank-liabilities sum [weight] of my-in-links
+
+    ;; Calcularea totalului de pasive (total-deposits + interbank-liabilities)
+    ;; Cum pasivele tin de dimensiunea bancii, daca aceasta este prea mica, setam depozitele cu '0' pentru mentinerea ecuatiei active=pasive
+    let total-liabilities max (list bank-size interbank-liabilities)
+    set total-deposits max (list 0 (total-liabilities - interbank-liabilities))
+
+    ;; Calcularea capitalului bancii si necesarul de active pentru mentinerea active=pasive
+    ;; Bazat pe Basel III - Capital Adequancy Ratio (8%) => 8% din active trebuie sa fie capitalul
+    ;; Pentru integritatea modelului, pentru a asigura ecuatia active=pasive, CAR-ul va fi luat din pasive.
+    let capital-adequancy-ratio (8 / 100)
+    let target-total-assets (total-liabilities / (1 - capital-adequancy-ratio) )
+
+    ;; Initializam capitalul bancii astfel incat total active (interbank-asset + liquid + illiquid) = total pasive (interbank-liabilities + total-deposits + equity)
+    set equity (target-total-assets - total-liabilities)
+
+    ;;;;;; Initializarea activelor, avand in vedere cate imprumuturi a acordat banca curenta.
+    ;; self -> bank
     let number-of-outs count (my-out-links)
     ifelse number-of-outs = 0 [
-      set illiquid-assets 0.75 * bank-size
-      set liquid-assets 0.25 * bank-size
+      set illiquid-assets 0.75 * target-total-assets
+      set liquid-assets 0.25 * target-total-assets
       set interbank-assets 0
     ]
     [
-      set illiquid-assets .55 * bank-size
-      set liquid-assets .25 * bank-size
-      set interbank-assets .2 * bank-size
-    ]
-
-    ; self <- bank
-    let number-of-ins count (my-in-links)
-    ifelse number-of-ins = 0 [
-      set interbank-liabilities 0
-      set total-deposits bank-size
-    ][
-      set interbank-liabilities sum [weight] of my-in-links
-      ifelse (bank-size < interbank-liabilities)
-      [set total-deposits 0]
-      [set total-deposits bank-size - interbank-liabilities]
+      set illiquid-assets 0.55 * target-total-assets
+      set liquid-assets 0.25 * target-total-assets
+      set interbank-assets 0.20 * target-total-assets
     ]
 
     set sme-uninsured-deposits-volume (rate-of-SME * total-deposits)
     set large-companies-uninsured-deposits-volume (rate-of-large-companies * total-deposits)
     set insured-deposits (total-deposits * (1 - (rate-of-SME + rate-of-large-companies)))
+    let asset-minus-liabilities ( (illiquid-assets + liquid-assets + interbank-assets) - (interbank-liabilities + total-deposits + equity) )
+    print (word "    Assets - Liabilities: " asset-minus-liabilities)
     print (word "    Iliquid assets: " illiquid-assets)
     print (word "    Liquid assets: " liquid-assets)
     print (word "    Interbank assets: " interbank-assets)
     print (word "    Interbank liabilities: " interbank-liabilities)
     print (word "    Sum of my-in-links: " sum [weight] of my-in-links)
+    print (word "    Equity: " equity)
     print (word "    Total deposits: " total-deposits)
     print (word "       from which insured: " insured-deposits)
     print (word "       from which SME uninsured: " sme-uninsured-deposits-volume)
     print (word "       from which large-companies uninsured: " large-companies-uninsured-deposits-volume)
-    distribute-interbank-assets currentTurtle
+    distribute-interbank-assets self
   ]
 end
 
@@ -578,6 +588,7 @@ to go
       ifelse (is-under-default-risk self)[
         print(word "       Is under default-risk? TRUE")
 ;        sell-granted-loans self
+;        set-state-for-bank self STATE-DEFAULT
       ][
         print(word "       Is under default-risk? FALSE \n")
       ]
@@ -789,6 +800,15 @@ end
 ;; Fn ce updateaza datele contabile ale vanzatorului unui imprumut (in caz de fire-sell assets)
 to update-seller-of-loan [seller to-subtract-amount to-add-amount]
   ask seller [
+    ;; Scadem capitalul propriu al bancii (equity va acoperi suma care se pierde).
+    ;; Daca equity ar deveni negativ, banca este tehnic insolventa, deci va intra in default.
+    set equity (equity - to-subtract-amount)
+    if (equity <= 0)[
+      set equity 0
+      set-state-for-bank self STATE-DEFAULT
+      print (word "          Bank " self " became insolvent due to fire-sale losses.")
+    ]
+
     print(word "          New props for seller" seller)
     let initial-interbank-assets interbank-assets
     let initial-liquid-assets liquid-assets
@@ -992,7 +1012,7 @@ number-of-banks
 number-of-banks
 2
 80
-16.0
+6.0
 1
 1
 NIL
@@ -1109,7 +1129,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-7.0
+3.0
 1
 1
 NIL
