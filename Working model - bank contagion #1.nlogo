@@ -500,23 +500,36 @@ to-report can-b-bail-in-amount [potential-default-b helping-neighbor rate]
   report eval
 end
 
-to creditors-bail-in [potential-default-b bailin-rate]
+;; Fn helper ce va scadea 'datoriile'(interbank-assets) ale bancii care risca sa intre in default cu o valoare de bailin-rate%
+;; Aceasta fn va actualiza valorile arcelor afectate, equity si interbank-assetsurile bancii care au imprumutat banca in risc de default, dar si bancii care evita defaultul
+to creditors-bail-in [potential-default-bank bailin-rate]
   print ("  Mechanism 1. Bailing-in using the CREDITORS.")
-  print (word "     Link loss rate: " bailin-rate)
-  print (word "   All borrowers can bail-in! Apply bail-in for borrowers.")
-  print (word "    Bailing in bank: " potential-default-b)
-  print (word "    Initial liabilities: " [interbank-liabilities] of potential-default-b)
-  set interbank-liabilities (interbank-liabilities * (1 - bailin-rate))
-  print (word "    Updated liabilities: " interbank-liabilities)
+  print (word "    Link loss rate: " bailin-rate)
+  print (word "      Bailing in bank: " potential-default-bank)
+  ;; Actualizarea 'datoriilor' bancii ce se afla in prag de default, in urma procesului de bail-in
+  ask potential-default-bank [
+    let amount-cancelled (interbank-liabilities * bailin-rate)
+    let initial-interbank-liabilities interbank-liabilities
+
+    set interbank-liabilities (interbank-liabilities - amount-cancelled)
+    set equity (equity + amount-cancelled)
+    print (word "      Interbank liabilities: " initial-interbank-liabilities " -> " interbank-liabilities)
+  ]
+
+  ;; Actualizarea 'activelor' bancilor (vecinilor) care au imprumutat banca ce se afla in risc de default
   ask in-link-neighbors [
-    let loss 0
+    let asset-loss 0
     print (word "    Bank " self " helps to bail:")
     print (word "      Initial interbank-assets: " interbank-assets)
-    ask out-link-to potential-default-b [
-      set loss (weight * bailin-rate) set weight (weight - loss)
-      print (word "      Link loss weight: " loss)
+    ;; Actualizarea arcului cu noua valoare.
+    ask out-link-to potential-default-bank [
+      set asset-loss (weight * bailin-rate)
+      set weight (weight - asset-loss)
+      print (word "      Link loss weight: " asset-loss)
     ]
-    set interbank-assets (interbank-assets - loss)
+
+    set interbank-assets (interbank-assets - asset-loss)
+    set equity (equity - asset-loss)
     print (word "      Updated interbank-assets: " interbank-assets)
   ]
 end
