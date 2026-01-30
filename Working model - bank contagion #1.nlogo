@@ -258,15 +258,15 @@ to setup-bank-financial-states
     ;; self -> bank
     let number-of-outs count (my-out-links)
     ifelse number-of-outs = 0 [
-      set liquid-assets (four-decimal (0.35 * target-total-assets))
+      set liquid-assets (four-decimal (0.30 * target-total-assets))
       set interbank-assets 0
     ]
     [
-      set liquid-assets (four-decimal (0.35 * target-total-assets))
+      set liquid-assets (four-decimal (0.30 * target-total-assets))
       set interbank-assets (four-decimal (0.20 * target-total-assets))
     ]
     ;; Activele nelichide se vor initializa cu remainder-ul dintre pasive totale - active curente => active nelichide (pentru a mentine active totale=pasive totale).
-    ;; Practic, valoarea acestui activ va fi 65% din target-total, sau 45% din target-total
+    ;; Practic, valoarea acestui activ va fi 70% din target-total, sau 50% din target-total
     set illiquid-assets four-decimal ( (equity + total-deposits + interbank-liabilities) - (liquid-assets + interbank-assets) )
 
     set sme-uninsured-deposits-volume (four-decimal (rate-of-SME * total-deposits))
@@ -289,7 +289,7 @@ to setup-bank-financial-states
   ]
 end
 
-to-report four-decimal [ n ] ; "c" for clean
+to-report four-decimal [ n ]
   report precision n 2
 end
 
@@ -326,7 +326,11 @@ to distribute-interbank-assets [currentTurtle]
 
       ask self [
         set weight howMuchToBorrow
-        set link-loan-type one-of possible-loan-types
+
+        ;; Initializam loan-type-ul ca fiind
+        set link-loan-type ifelse-value (random-float 100 < short-loan-ratio)
+        [ "short-term" ]
+        [ "long-term" ]
         set link-interest-rate four-decimal (get-interest-rate currentTurtle link-loan-type)
       ]
     ]
@@ -671,11 +675,28 @@ end
 to go
   print ("\n TICK \n")
   if default-max-banks-reached = true [ stop ]
-
-
   let defaulted-this-iteration []
 
-  ;; Sursa infectiei pentru iteratia curenta. (it1 = exogenous, it2 = cele care au intrat in default pe urma exogenous shock, it3 = ...)
+  ;; Verificare de siguranta - bilant contabil pentru toate - verificam daca exista altele care trebuie sa intre in default/criza lichiditate, in functie de modificarile de pe tickul anterior
+  ;; Auditare globală asupra tuturor băncilor care sunt încă active
+  ask turtles with [state != STATE-DEFAULT] [
+    ifelse (is-under-default-risk self)[
+      print (word "       Auditing bank " self " as default-state after final audit checks. Its neighbors will be looped through next iteration")
+      set-state-for-bank self STATE-DEFAULT
+      mark-link-to-default-bank-as-unsellable self
+    ][
+      ifelse (is-under-liquidity-risk self)[
+        print (word "       Auditing bank " self " as liquidity-crisis state after final audit checks")
+        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+        mark-link-to-liquidity-crisis-as-unsellable self
+      ][
+        set-state-for-bank self STATE-HEALTHY
+        mark-link-to-self-as-sellable self
+      ]
+    ]
+  ]
+
+  ;; Sursa infectiei pentru iteratia curenta, bazandu-ne pe rezultatul iteratiei precedente. (it1 = exogenous, vf vecini, it2 = vecini + cele care au intrat in default pe urma exogenous shock, it3 = ...)
   let current-iteration-default-banks turtles with [state = STATE-DEFAULT and not member? self visited-default-banks]
   print (word "Default banks in this iteration: " [self] of current-iteration-default-banks)
 
@@ -741,25 +762,6 @@ to go
     mark-link-to-default-bank-as-unsellable self
   ]
 
-  ;; Verificare de siguranta - bilant contabil pentru toate - verificam daca exista altele care trebuie sa intre in default/criza solventa
-  ;; Auditare globală asupra tuturor băncilor care sunt încă active
-  ask turtles with [state != STATE-DEFAULT] [
-    ifelse (is-under-default-risk self)[
-      print (word "       Auditing bank " self " as default-state after final audit checks. Its neighbors will be looped through next iteration")
-      set-state-for-bank self STATE-DEFAULT
-      mark-link-to-default-bank-as-unsellable self
-    ][
-      ifelse (is-under-liquidity-risk self)[
-        print (word "       Auditing bank " self " as liquidity-crisis state after final audit checks")
-        set-state-for-bank self STATE-LIQUIDITY-CRISIS
-        mark-link-to-liquidity-crisis-as-unsellable self
-      ][
-        set-state-for-bank self STATE-HEALTHY
-        mark-link-to-self-as-sellable self
-      ]
-    ]
-  ]
-
   print(word "Defaulted-this-iteration: " defaulted-this-iteration)
 
 ; if ticks = 20 [stop]
@@ -817,11 +819,14 @@ end
 ;;Fn ce verifica daca o banca este in criza de lichiditate (in acest nivel, va vinde creditele date pentru cresterea lichiditatii);;
 to-report is-under-liquidity-risk [bank]
   let maybe-liquidity-risk false
-
+  print (word "Checking bank: " bank)
   ask bank [
     let immediate-deposit-demand (four-decimal (total-deposits * deposit-withdrawal-rate))
+    let immediate-interbank-liabilities-demand (four-decimal (sum [weight] of my-in-links with [link-loan-type = "short-term"]))
 
-    if (liquid-assets < (interbank-liabilities + immediate-deposit-demand) ) [
+    print (word "INTERBANK LIABILITIES. ALL: " interbank-liabilities " | IMMEDIATE: " immediate-interbank-liabilities-demand)
+
+    if (liquid-assets < (four-decimal (immediate-interbank-liabilities-demand + immediate-deposit-demand)) ) [
       set maybe-liquidity-risk true
     ]
   ]
@@ -1103,8 +1108,8 @@ GRAPHICS-WINDOW
 17
 -17
 17
-1
-1
+0
+0
 1
 ticks
 30.0
@@ -1146,7 +1151,7 @@ number-of-banks
 number-of-banks
 2
 80
-30.0
+23.0
 1
 1
 NIL
@@ -1201,10 +1206,10 @@ PENS
 "pen-2" 1.0 0 -817084 true "" "plot count turtles with [ color = orange]"
 
 INPUTBOX
-270
-226
-320
-286
+269
+271
+319
+331
 mu
 0.0
 1
@@ -1212,10 +1217,10 @@ mu
 Number
 
 INPUTBOX
+331
+271
+381
 332
-226
-382
-287
 sigma
 1.0
 1
@@ -1264,7 +1269,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-11.0
+7.0
 1
 1
 NIL
@@ -1350,6 +1355,39 @@ deposits-withdrawal-rate
 1
 NIL
 HORIZONTAL
+
+SLIDER
+269
+225
+397
+258
+short-loan-ratio
+short-loan-ratio
+0
+100
+50.0
+1
+1
+NIL
+HORIZONTAL
+
+PLOT
+1199
+80
+1399
+230
+Fond garantare 
+NIL
+NIL
+0.0
+30.0
+0.0
+1000.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot fund-resolution-budget"
 
 @#$#@#$#@
 ## WHAT IS IT?
