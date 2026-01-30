@@ -258,15 +258,15 @@ to setup-bank-financial-states
     ;; self -> bank
     let number-of-outs count (my-out-links)
     ifelse number-of-outs = 0 [
-      set liquid-assets (four-decimal (0.25 * target-total-assets))
+      set liquid-assets (four-decimal (0.35 * target-total-assets))
       set interbank-assets 0
     ]
     [
-      set liquid-assets (four-decimal (0.25 * target-total-assets))
+      set liquid-assets (four-decimal (0.35 * target-total-assets))
       set interbank-assets (four-decimal (0.20 * target-total-assets))
     ]
     ;; Activele nelichide se vor initializa cu remainder-ul dintre pasive totale - active curente => active nelichide (pentru a mentine active totale=pasive totale).
-    ;; Practic, valoarea acestui activ va fi 75% din target-total, sau 55% din target-total
+    ;; Practic, valoarea acestui activ va fi 65% din target-total, sau 5% din target-total
     set illiquid-assets four-decimal ( (equity + total-deposits + interbank-liabilities) - (liquid-assets + interbank-assets) )
 
     set sme-uninsured-deposits-volume (four-decimal (rate-of-SME * total-deposits))
@@ -445,7 +445,7 @@ end
 ;;Fn helper ce descrie procesul de bail-in / bail-out
 ;; 1st tier bail-in - bancile care m-au imprumutat vor fi afectate
 ;; 2nd tier bail-in - depozitele curente vor fi afectate
-;; bailout - gov. intv.
+;; 3rd tier bail-in - fondul de garantare al depozitelor bancare.
 to try-to-cascade-mitigate-default [potential-default-bank]
   ask potential-default-bank [
     let borrowers-bail-in true
@@ -468,19 +468,19 @@ to try-to-cascade-mitigate-default [potential-default-bank]
         [ set required-bail-in-rate 1 ]
         [ set required-bail-in-rate (four-decimal (amount-still-required-to-save / interbank-liabilities)) ]
 
-;        ;; Aplicam primul mecanism anti-default. Bancile care m-au imprumutat vor face bail-in. Se actualizeaza suma care inca este necesara pentru acoperire.
-;        print (word "       Proceeding to step 1 of bail-in - creditors. Required amount from creditors: " amount-still-required-to-save)
-;        creditors-bail-in potential-default-bank required-bail-in-rate
-;        set amount-still-required-to-save (four-decimal abs(interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits) )
-;        set current-net-worth (four-decimal (compute-net-worth potential-default-bank))
-;
-;        ; Daca inca este in risc de default dupa prima primul bail-in, continuam cu al2lea
-;        if (is-under-default-risk potential-default-bank)[
-;          print (word "     Proceeding to step 2 of bail-in - deposits. Required amount from uninsured deposits: " amount-still-required-to-save)
-;          deposits-bail-in potential-default-bank
-;          set current-net-worth (four-decimal (compute-net-worth potential-default-bank))
-;          set amount-still-required-to-save (four-decimal abs(current-net-worth) )
-;        ]
+        ;; Aplicam primul mecanism anti-default. Bancile care m-au imprumutat vor face bail-in. Se actualizeaza suma care inca este necesara pentru acoperire.
+        print (word "       Proceeding to step 1 of bail-in - creditors. Required amount from creditors: " amount-still-required-to-save)
+        creditors-bail-in potential-default-bank required-bail-in-rate
+        set amount-still-required-to-save (four-decimal abs(interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits) )
+        set current-net-worth (four-decimal (compute-net-worth potential-default-bank))
+
+        ;; Daca inca este in risc de default dupa prima primul bail-in, continuam cu al2lea
+        if (is-under-default-risk potential-default-bank)[
+          print (word "     Proceeding to step 2 of bail-in - deposits. Required amount from uninsured deposits: " amount-still-required-to-save)
+          deposits-bail-in potential-default-bank
+          set current-net-worth (four-decimal (compute-net-worth potential-default-bank))
+          set amount-still-required-to-save (four-decimal abs(current-net-worth) )
+        ]
 
         ;; Daca inca este in risc de default dupa 1) creditors bail-in 2) deposists-bail-in, continuam cu fondul de rezolutie al 'Fondului de Garantare a Depozitelor Bancare'
         if (is-under-default-risk potential-default-bank = true) [
@@ -502,7 +502,7 @@ to apply-resolution-funds [potential-default-bank]
   ask potential-default-bank [
 
     ;; Un capital-adequancy-ratio de minim 5%, pentru ca banca sa nu fie prea fragila odata ce intra din nou in sistem.
-
+    ;; Totusi, aceasta valoare pentru equity nu este neaparat asigurata, intrucat trebuie sa luam in considerare si contributia maxima pe care FGDB o poate avea
     let target-CAR 0.05
 
     ;; Verificare initiala a capitalurilor. Daca acestea sunt negative, trebuie luate in considerare cand se calculeaza target-equity, ca Fondul de Garantare al Depozitelor sa acopere si aceasta 'gaura'
@@ -649,17 +649,21 @@ to mark-link-to-default-bank-as-unsellable [default-bank]
   ]
 end
 
-to mark-link-to-liquidity-crisis-as-unsellable [vertice]
-  ask vertice[
-    set color orange
-    set is-sellable false
+to mark-link-to-liquidity-crisis-as-unsellable [liquidity-crisis-bank]
+  ask liquidity-crisis-bank[
+    ask my-in-links[
+      set color orange
+      set is-sellable false
+    ]
   ]
 end
 
-to mark-link-as-sellable [vertice]
-  ask vertice [
-    set color gray
-    set is-sellable true
+to mark-link-to-self-as-sellable [bank]
+  ask bank [
+    ask my-in-links [
+      set color gray
+      set is-sellable true
+    ]
   ]
 end
 
@@ -703,16 +707,12 @@ to go
     ifelse (is-under-liquidity-risk self)[
       print (word "       Still under liquidity risk? TRUE")
       set-state-for-bank self STATE-LIQUIDITY-CRISIS
-      ask my-in-links [
-        mark-link-to-liquidity-crisis-as-unsellable self
-      ]
+      mark-link-to-liquidity-crisis-as-unsellable self
     ][
       ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
       print (word "       Still under liquidity risk? FALSE. Setting state for bank as: " STATE-HEALTHY)
       set-state-for-bank self STATE-HEALTHY
-      ask my-in-links [
-        mark-link-as-sellable self
-      ]
+      mark-link-to-self-as-sellable self
     ]
 
     ;; Verificare initiala impotriva insolventei + actionare in situatie de default.
@@ -738,19 +738,34 @@ to go
   ask current-iteration-default-banks [
     set visited-default-banks lput self visited-default-banks
     set-state-for-bank self STATE-DEFAULT
-
     mark-link-to-default-bank-as-unsellable self
   ]
 
+  ;; Verificare de siguranta - bilant contabil pentru toate - verificam daca exista altele care trebuie sa intre in default/criza solventa
+  ;; Auditare globală asupra tuturor băncilor care sunt încă active
+  ask turtles with [state != STATE-DEFAULT] [
+    ifelse (is-under-default-risk self)[
+      print (word "       Auditing bank " self " as default-state after final audit checks. Its neighbors will be looped through next iteration")
+      set-state-for-bank self STATE-DEFAULT
+      mark-link-to-default-bank-as-unsellable self
+    ][
+      ifelse (is-under-liquidity-risk self)[
+        print (word "       Auditing bank " self " as liquidity-crisis state after final audit checks")
+        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+        mark-link-to-liquidity-crisis-as-unsellable self
+      ][
+        set-state-for-bank self STATE-HEALTHY
+        mark-link-to-self-as-sellable self
+      ]
+    ]
+  ]
 
-  check-balance-sheet-for-all
-
-  print(word "The following banks are defaulted: " already-default-banks ", so they cannot buy any loans")
   print(word "Defaulted-this-iteration: " defaulted-this-iteration)
 
 ; if ticks = 20 [stop]
- let defaulted-banks count turtles with [color = red]
- if defaulted-banks = number-of-banks [ set default-max-banks-reached true ]
+ if ( (count turtles with [state = STATE-DEFAULT]) = number-of-banks) [
+    set default-max-banks-reached true
+  ]
  tick
 end
 
@@ -1131,7 +1146,7 @@ number-of-banks
 number-of-banks
 2
 80
-10.0
+30.0
 1
 1
 NIL
