@@ -132,10 +132,10 @@ to setup-bank-nonfinancial-states
     foreach possible-loan-types [
       [loanType] ->
       ifelse loanType = "short-term"[
-        table:put interest-rate-map loanType (1.01 + (precision random-float 0.01 4)) ; interest-rate btw (1%-2%) 4 means it has .xxxx decimal points => random between 0 - 0.01 with precision of 4
+        table:put interest-rate-map loanType four-decimal ( (1.01 + (precision random-float 0.01 4)) ); interest-rate btw (1%-2%) 4 means it has .xxxx decimal points => random between 0 - 0.01 with precision of 4
       ][
         if loanType = "long-term" [
-          table:put interest-rate-map loanType (1.03 + (precision random-float 0.01 4)) ; interest-rate btw (3%-4%) 4 means it has .xxxx decimal points => random between 0 - 0.01 with precision of 4
+          table:put interest-rate-map loanType four-decimal ( (1.03 + (precision random-float 0.01 4))) ; interest-rate btw (3%-4%) 4 means it has .xxxx decimal points => random between 0 - 0.01 with precision of 4
         ]
       ]
     ]
@@ -234,42 +234,45 @@ to setup-bank-financial-states
     ;;;;;; Initializarea pasivelor, avand in vedere cate imprumuturi a contractat banca curenta
     ;; self <- bank
     let number-of-ins count (my-in-links)
-    set interbank-liabilities sum [weight] of my-in-links
+    set interbank-liabilities (four-decimal sum [weight] of my-in-links)
+
     ;; Calcularea totalului de pasive (total-deposits + interbank-liabilities)
     ;; Cum pasivele tin de dimensiunea bancii, daca aceasta este prea mica, setam depozitele cu '0' pentru mentinerea ecuatiei active=pasive
-    let total-liabilities max (list bank-size interbank-liabilities)
-    set total-deposits max (list 0 (total-liabilities - interbank-liabilities))
+    let total-liabilities four-decimal (max (list bank-size interbank-liabilities))
+    set total-deposits four-decimal (max (list 0 (total-liabilities - interbank-liabilities)))
 
     ;; Calcularea capitalului bancii si necesarul de active pentru mentinerea active=pasive
     ;; Bazat pe Basel III - Capital Adequancy Ratio (8%) => 8% din active trebuie sa fie capitalul
     let capital-adequancy-ratio (8 / 100)
-    let target-total-assets (total-liabilities / (1 - capital-adequancy-ratio) )
+    let target-total-assets (four-decimal (total-liabilities / (1 - capital-adequancy-ratio)))
 
     ;; Initializam capitalul bancii astfel incat total active (interbank-asset + liquid + illiquid) = total pasive (interbank-liabilities + total-deposits + equity)
-    set equity (target-total-assets - total-liabilities)
+    set equity (four-decimal (target-total-assets - total-liabilities))
 
-    ;;;;;; Initializarea activelor, avand in vedere cate imprumuturi a acordat banca curenta.
+    ;; Initializarea activelor, avand in vedere cate imprumuturi a acordat banca curenta.
     ;; self -> bank
     let number-of-outs count (my-out-links)
     ifelse number-of-outs = 0 [
-      set illiquid-assets 0.75 * target-total-assets
-      set liquid-assets 0.25 * target-total-assets
+      set liquid-assets (four-decimal (0.25 * target-total-assets))
       set interbank-assets 0
     ]
     [
-      set illiquid-assets 0.55 * target-total-assets
-      set liquid-assets 0.25 * target-total-assets
-      set interbank-assets 0.20 * target-total-assets
+      set liquid-assets (four-decimal (0.25 * target-total-assets))
+      set interbank-assets (four-decimal (0.20 * target-total-assets))
     ]
+    ;; Activele nelichide se vor initializa cu remainder-ul dintre pasive totale - active curente => active nelichide (pentru a mentine active totale=pasive totale).
+    ;; Practic, valoarea acestui activ va fi 75% din target-total, sau 55% din target-total
+    set illiquid-assets four-decimal ( (equity + total-deposits + interbank-liabilities) - (liquid-assets + interbank-assets) )
 
-    set sme-uninsured-deposits-volume (rate-of-SME * total-deposits)
-    set large-companies-uninsured-deposits-volume (rate-of-large-companies * total-deposits)
-    set insured-deposits (total-deposits * (1 - (rate-of-SME + rate-of-large-companies)))
-    let asset-minus-liabilities ( (illiquid-assets + liquid-assets + interbank-assets) - (interbank-liabilities + total-deposits + equity) )
+    set sme-uninsured-deposits-volume (four-decimal (rate-of-SME * total-deposits))
+    set large-companies-uninsured-deposits-volume (four-decimal (rate-of-large-companies * total-deposits))
+    set insured-deposits (four-decimal (total-deposits * (1 - (rate-of-SME + rate-of-large-companies))))
+    let asset-minus-liabilities (four-decimal ( (illiquid-assets + liquid-assets + interbank-assets) - (interbank-liabilities + total-deposits + equity) ))
     print (word "    Assets - Liabilities: " asset-minus-liabilities)
     print (word "    Iliquid assets: " illiquid-assets)
     print (word "    Liquid assets: " liquid-assets)
     print (word "    Interbank assets: " interbank-assets)
+    print (word "    Interbank liabilities: " interbank-liabilities)
     print (word "    Interbank liabilities: " interbank-liabilities)
     print (word "    Sum of my-in-links: " sum [weight] of my-in-links)
     print (word "    Equity: " equity)
@@ -279,6 +282,10 @@ to setup-bank-financial-states
     print (word "       from which large-companies uninsured: " large-companies-uninsured-deposits-volume)
     distribute-interbank-assets self
   ]
+end
+
+to-report four-decimal [ n ] ; "c" for clean
+  report precision n 2
 end
 
 ; Sets up financial state of each bank. If bank has no links,
@@ -308,14 +315,14 @@ to distribute-interbank-assets [currentTurtle]
       let loanType one-of possible-loan-types ; randomly choose one loanType from the global initialized list
       print(word "Type of loan: " loanType " to " connected-turtle)
 
-      let howMuchToBorrow ( ([bank-size] of connected-turtle * [interbank-assets] of currentTurtle) / sumWeightsOfConnectedTo )
+      let howMuchToBorrow four-decimal ( ([bank-size] of connected-turtle * [interbank-assets] of currentTurtle) / sumWeightsOfConnectedTo )
       print (word "Borrowing " howMuchToBorrow " to " connected-turtle)
       set weight howMuchToBorrow
 
       ask self [
         set weight howMuchToBorrow
         set link-loan-type one-of possible-loan-types
-        set link-interest-rate get-interest-rate currentTurtle link-loan-type
+        set link-interest-rate four-decimal (get-interest-rate currentTurtle link-loan-type)
       ]
     ]
   ]
@@ -356,14 +363,14 @@ to cut-interbankassets-if-lent-towards-default [affected-bank]
     ask toxic-out-links [
       mark-link-to-default-bank-as-unsellable self
     ]
-    let total-asset-loss sum [weight] of toxic-out-links
+    let total-asset-loss (four-decimal (sum [weight] of toxic-out-links))
 
     let updated-with-loss-interbank-assets 0
     if (interbank-assets > total-asset-loss)[
-      set updated-with-loss-interbank-assets (interbank-assets - total-asset-loss)
+      set updated-with-loss-interbank-assets (four-decimal (interbank-assets - total-asset-loss))
     ]
 
-    set equity (equity - total-asset-loss)
+    set equity four-decimal (equity - total-asset-loss)
     set interbank-assets updated-with-loss-interbank-assets
     print (word "     Interbank-assets: " initial-interbank-assets " -> " updated-with-loss-interbank-assets " | Equity: " initial-equity " -> " equity)
   ]
@@ -421,7 +428,7 @@ end
 to-report compute-net-worth [bank]
   let net-worth 0
   ask bank[
-    set net-worth (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
+    set net-worth (four-decimal (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits))
   ]
   report net-worth
 end
@@ -718,25 +725,25 @@ to go
       ]
     ]
 
-    ;; Verificare initiala impotriva insolventei + actionare in situatie de default.
-    ifelse (is-under-default-risk self)[
-      print(word "       Is under default-risk? TRUE")
-      print(word "~~~~~~~ Triggering regulatory processes ~~~~~~~")
-      try-to-cascade-mitigate-default self
-    ][
-      print(word "       Is under default-risk? FALSE \n")
-    ]
-
-    ;; Verificare ulterioara daca banca inca se afla in starea de default. Daca da, ii schimbam starea si marcam ca fiind imprumuturile contractate ca fiind 'nesigure' pentur potentiali cumparatori.
-    ifelse (is-under-default-risk self)[
-      print (word "       Still under default risk? TRUE")
-      set-state-for-bank self STATE-DEFAULT
-      ask my-in-links [
-        mark-link-to-default-bank-as-unsellable self
-      ]
-    ][
-      print(word "       Still under default risk? FALSE")
-    ]
+;    ;; Verificare initiala impotriva insolventei + actionare in situatie de default.
+;    ifelse (is-under-default-risk self)[
+;      print(word "       Is under default-risk? TRUE")
+;      print(word "~~~~~~~ Triggering regulatory processes ~~~~~~~")
+;      try-to-cascade-mitigate-default self
+;    ][
+;      print(word "       Is under default-risk? FALSE \n")
+;    ]
+;
+;    ;; Verificare ulterioara daca banca inca se afla in starea de default. Daca da, ii schimbam starea si marcam ca fiind imprumuturile contractate ca fiind 'nesigure' pentur potentiali cumparatori.
+;    ifelse (is-under-default-risk self)[
+;      print (word "       Still under default risk? TRUE")
+;      set-state-for-bank self STATE-DEFAULT
+;      ask my-in-links [
+;        mark-link-to-default-bank-as-unsellable self
+;      ]
+;    ][
+;      print(word "       Still under default risk? FALSE")
+;    ]
 
 ;    ask banks-that-borrowed-affected-one [
 ;;      reduce-interbankassets-of-borrower current-default-bank self
@@ -892,8 +899,8 @@ end
 to-report is-under-default-risk [bank]
   let maybe-default false
   ask bank [
-    let total-assets (interbank-assets + illiquid-assets + liquid-assets)
-    let total-liabilities (interbank-liabilities + total-deposits)
+    let total-assets (four-decimal (interbank-assets + illiquid-assets + liquid-assets) )
+    let total-liabilities (four-decimal (interbank-liabilities + total-deposits) )
     if (total-assets < total-liabilities) [
       set maybe-default true
     ]
@@ -906,7 +913,7 @@ to-report is-under-liquidity-risk [bank]
   let maybe-liquidity-risk false
 
   ask bank [
-    let immediate-deposit-demand (total-deposits * deposit-withdrawal-rate)
+    let immediate-deposit-demand (four-decimal (total-deposits * deposit-withdrawal-rate))
 
     if (liquid-assets < (interbank-liabilities + immediate-deposit-demand) ) [
       set maybe-liquidity-risk true
@@ -984,7 +991,7 @@ to-report find-random-potential-buyer-for-loan [loan-to-sell for-amount]
     and (is-under-liquidity-risk self = false)
     and self != bank-that-wants-to-sell
     and self != bank-that-borrows
-    and liquid-assets >= for-amount
+    and four-decimal liquid-assets >= four-decimal for-amount
   ])
 
   print (word "         Potential-buyers: " [self] of potential-buyers-agentset)
@@ -1004,14 +1011,14 @@ to update-buyer-of-loan [buyer amount-to-buy]
     let initial-liquid-assets liquid-assets
     let initial-equity equity
 
-    let price-bought-for (amount-to-buy * (1 - discount-rate) )
-    let equity-gains (amount-to-buy * discount-rate)
+    let price-bought-for (four-decimal (amount-to-buy * (1 - discount-rate) ))
+    let equity-gains (four-decimal (amount-to-buy * discount-rate))
 
     print(word "          New props for buyer" buyer)
 
-    set interbank-assets interbank-assets + amount-to-buy
-    set liquid-assets liquid-assets - price-bought-for
-    set equity (equity + equity-gains)
+    set interbank-assets (four-decimal (interbank-assets + amount-to-buy))
+    set liquid-assets (four-decimal (liquid-assets - price-bought-for)
+    set equity (four-decimal (equity + equity-gains))
 
     print (word "             Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
     print (word "             Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
@@ -1028,23 +1035,23 @@ to update-seller-of-loan [seller amount-to-sell]
     let initial-liquid-assets liquid-assets
     let initial-equity equity
 
-    let price-sold-for (amount-to-sell * (1 - discount-rate))
-    let equity-loss (amount-to-sell * discount-rate)
+    let price-sold-for (four-decimal (amount-to-sell * (1 - discount-rate)))
+    let equity-loss (four-decimal (amount-to-sell * discount-rate))
 
 
     ;; Scadem capitalul propriu al bancii (equity va acoperi suma care se pierde).
     ;; Daca equity ar deveni negativ, banca este tehnic insolventa, deci va intra in default in 'to go', posibil la mecanismele regulatoare.
     ;; Pierderea este absorbita de capitalul bancii
-    set equity (equity - equity-loss)
+    set equity (four-decimal (equity - equity-loss))
 
     print(word "          New props for seller" seller)
 
-    ifelse (amount-to-sell > interbank-assets)[
+    ifelse (four-decimal amount-to-sell > four-dinterbank-assets)[
       set interbank-assets 0
     ][
-      set interbank-assets (interbank-assets - amount-to-sell)
+      set interbank-assets (four-decimal (interbank-assets - amount-to-sell))
     ]
-    set liquid-assets (liquid-assets + price-sold-for)
+    set liquid-assets (four-decimal (liquid-assets + price-sold-for))
 
     print (word "             Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
     print (word "             Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
@@ -1070,17 +1077,17 @@ to set-and-update-new-link [bank-that-buys-loan old-loan]
       ask out-link-to who-loaned [
         set shape "curved"
         set color green
-        set weight ([weight] of old-loan)
-        set link-interest-rate ([link-interest-rate] of old-loan)
-        set link-loan-type ([link-loan-type] of old-loan)
+        set weight (four-decimal ([weight] of old-loan))
+        set link-interest-rate (four-decimal ([link-interest-rate] of old-loan))
+        set link-loan-type [link-loan-type] of old-loan
       ]
     ][
       ;; Daca exista, actualizam arcul curent cu noile valori
       ask existing-link [
-        set weight (weight + [weight] of old-loan)
+        set weight (four-decimal (weight + [weight] of old-loan))
         set color yellow ;; Highlight that this link grew
         ;; Setam o medie a ratelor, pentru usurinta calculelor
-        set link-interest-rate ([link-interest-rate] of old-loan / link-interest-rate)
+        set link-interest-rate (four-decimal ([link-interest-rate] of old-loan / link-interest-rate))
       ]
     ]
 
@@ -1106,7 +1113,7 @@ to sell-granted-loans [potential-liquidity-crisis-bank]
       if (is-under-liquidity-risk potential-liquidity-crisis-bank)[
 
         if ([state] of end2 = STATE-HEALTHY)[
-          let amount-required (weight - weight * discount-rate)
+          let amount-required (four-decimal (weight - weight * discount-rate) )
           print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: :" amount-required)
 
           let buyer find-random-potential-buyer-for-loan self amount-required
