@@ -448,29 +448,29 @@ to try-to-cascade-mitigate-default [potential-default-bank]
 
       if (compute-net-worth potential-default-bank < 0)[
 
-        let current-net-worth (compute-net-worth potential-default-bank)
+        let current-net-worth (four-decimal (compute-net-worth potential-default-bank))
 
         let required-bail-in-rate 0
-        set amount-still-required-to-save abs(current-net-worth)
+        set amount-still-required-to-save (four-decimal abs(current-net-worth))
 
         ;; Pentru a nu scadea mai mult decat valoarea arcului, de aceea este necesara aceasta verificare.
         ;; Rata cu care fiecare arc va scadea, in functie de suma necesara. Ne vom raporta doar la interbank-liabilities, intrucat bancile care m-au imprumutat se raporteaza doar la acest param.
         ifelse (amount-still-required-to-save > interbank-liabilities)
         [ set required-bail-in-rate 1 ]
-        [ set required-bail-in-rate (amount-still-required-to-save / interbank-liabilities) ]
+        [ set required-bail-in-rate (four-decimal (amount-still-required-to-save / interbank-liabilities)) ]
 
         ;; Aplicam primul mecanism anti-default. Bancile care m-au imprumutat vor face bail-in. Se actualizeaza suma care inca este necesara pentru acoperire.
         print (word "       Proceeding to step 1 of bail-in - creditors. Required amount from creditors: " amount-still-required-to-save)
         creditors-bail-in potential-default-bank required-bail-in-rate
-        set amount-still-required-to-save abs (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
-        set current-net-worth (compute-net-worth potential-default-bank)
+        set amount-still-required-to-save (four-decimal abs(interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits) )
+        set current-net-worth (four-decimal (compute-net-worth potential-default-bank))
 
-        ;; Daca inca este in risc de default dupa prima primul bail-in, continuam cu al2lea
+        ; Daca inca este in risc de default dupa prima primul bail-in, continuam cu al2lea
         if (is-under-default-risk potential-default-bank)[
           print (word "     Proceeding to step 2 of bail-in - deposits. Required amount from uninsured deposits: " amount-still-required-to-save)
-          deposits-bail-in-copy potential-default-bank
-          set current-net-worth (compute-net-worth potential-default-bank)
-          set amount-still-required-to-save abs(current-net-worth)
+          deposits-bail-in potential-default-bank
+          set current-net-worth (four-decimal (compute-net-worth potential-default-bank))
+          set amount-still-required-to-save (four-decimal abs(current-net-worth) )
         ]
       ]
     ]
@@ -532,13 +532,13 @@ to creditors-bail-in [potential-default-bank bailin-rate]
   print (word "        Link loss rate: " bailin-rate)
   ;; Actualizarea 'datoriilor' bancii ce se afla in prag de default, in urma procesului de bail-in
   ask potential-default-bank [
-    let amount-cancelled (interbank-liabilities * bailin-rate)
+    let amount-cancelled (four-decimal (interbank-liabilities * bailin-rate))
     print (word "        Cancelled amount: " amount-cancelled)
     let initial-interbank-liabilities interbank-liabilities
     let initial-equity equity
 
-    set interbank-liabilities (interbank-liabilities - amount-cancelled)
-    set equity (equity + amount-cancelled)
+    set interbank-liabilities (four-decimal (interbank-liabilities - amount-cancelled))
+    set equity (four-decimal (equity + amount-cancelled))
     print (word "         Interbank liabilities: " initial-interbank-liabilities " -> " interbank-liabilities)
     print (word "         Equity: " initial-equity " -> " equity)
   ]
@@ -553,59 +553,25 @@ to creditors-bail-in [potential-default-bank bailin-rate]
 
     ;; Actualizarea arcului cu noua valoare.
     ask out-link-to potential-default-bank [
-      set asset-loss (weight * bailin-rate)
-      set weight (weight - asset-loss)
+      set asset-loss (four-decimal (weight * bailin-rate))
+      set weight (four-decimal (weight - asset-loss))
       print (word "         Link loss weight: " asset-loss)
     ]
 
-    set interbank-assets (interbank-assets - asset-loss)
-    set equity (equity - asset-loss)
+    set interbank-assets (four-decimal (interbank-assets - asset-loss))
+    set equity (four-decimal (equity - asset-loss))
     print (word "         Interbank-assets: " initial-interbank-assets " -> " interbank-assets)
     print (word "         Equity: " initial-equity " -> " equity)
   ]
 end
 
-to deposits-bail-in [potential-default-bank required-amount]
-  print ("  Mechanism 2. Bailing-in using the UNINSURED DEPOSITS.")
-  ask potential-default-bank [
-    let initial-equity equity
-    let initial-total-deposits total-deposits
-
-    print (word "     Uninsured large-companies amount: " large-companies-uninsured-deposits-volume)
-    print (word "     Uninsured SME deposits amount: " sme-uninsured-deposits-volume)
-
-    print ("     Try to bail-in using deposits..")
-
-    ; Start bailing-in with the large-companies deposits.
-    let large-companies-contribution-amount get-min required-amount large-companies-uninsured-deposits-volume
-    print (word "      Large companies uninsured deposits contribution amount: " large-companies-contribution-amount)
-    set total-deposits (total-deposits - large-companies-contribution-amount)
-    print (word "       Total deposits: " initial-total-deposits " -> " total-deposits)
-    set large-companies-uninsured-deposits-volume (large-companies-uninsured-deposits-volume - large-companies-contribution-amount)
-
-    set required-amount abs (interbank-assets + illiquid-assets + liquid-assets - interbank-liabilities - total-deposits)
-
-    ; Is still under risk of default? If so, continue with the SME deposits.
-    if (is-under-default-risk potential-default-bank = true) [
-      let sme-contribution-amount get-min required-amount sme-uninsured-deposits-volume
-      set initial-total-deposits total-deposits
-      print (word "      Still required: " required-amount)
-      print (word "      SMEs uninsured deposits contribution amount: " sme-contribution-amount)
-      set total-deposits (total-deposits - sme-contribution-amount)
-      print (word "       Total deposits: " initial-total-deposits " -> " total-deposits)
-      set sme-uninsured-deposits-volume (sme-uninsured-deposits-volume - sme-contribution-amount)
-    ]
-    print(word "       Equity: " initial-equity " -> " equity)
-  ]
-end
-
-to deposits-bail-in-copy [potential-default-bank]
+to deposits-bail-in [potential-default-bank]
   print ("  Mechanism 2. Bailing-in using the UNINSURED DEPOSITS.")
   ask potential-default-bank [
 
     ifelse ( (compute-net-worth self) < 0)[
 
-      let required-amount-for-deposit-bailin abs(compute-net-worth self)
+      let required-amount-for-deposit-bailin (four-decimal abs(compute-net-worth self))
 
       let initial-equity equity
       let initial-total-deposits total-deposits
@@ -618,26 +584,26 @@ to deposits-bail-in-copy [potential-default-bank]
       print ("     Try to bail-in using deposits..")
 
       ; Start bailing-in with the large-companies deposits.
-      let large-companies-contribution-amount get-min required-amount-for-deposit-bailin large-companies-uninsured-deposits-volume
+      let large-companies-contribution-amount (four-decimal (get-min required-amount-for-deposit-bailin large-companies-uninsured-deposits-volume))
       print (word "      Large companies uninsured deposits contribution amount: " large-companies-contribution-amount)
-      set total-deposits (total-deposits - large-companies-contribution-amount)
+      set total-deposits (four-decimal (total-deposits - large-companies-contribution-amount))
       print (word "       Total deposits: " initial-total-deposits " -> " total-deposits)
-      set large-companies-uninsured-deposits-volume (large-companies-uninsured-deposits-volume - large-companies-contribution-amount)
-      set equity (equity + large-companies-contribution-amount)
+      set large-companies-uninsured-deposits-volume (four-decimal (large-companies-uninsured-deposits-volume - large-companies-contribution-amount))
+      set equity (four-decimal (equity + large-companies-contribution-amount))
 
-      set required-amount-for-deposit-bailin (required-amount-for-deposit-bailin - large-companies-contribution-amount)
+      set required-amount-for-deposit-bailin (four-decimal (required-amount-for-deposit-bailin - large-companies-contribution-amount))
 
       ; Is still under risk of default? If so, continue with the SME deposits.
       if (is-under-default-risk potential-default-bank = true) [
         print (word "      Still required: " required-amount-for-deposit-bailin)
 
-        let sme-contribution-amount get-min required-amount-for-deposit-bailin sme-uninsured-deposits-volume
+        let sme-contribution-amount (four-decimal (get-min required-amount-for-deposit-bailin sme-uninsured-deposits-volume))
         set initial-total-deposits total-deposits
         print (word "      SMEs uninsured deposits contribution amount: " sme-contribution-amount)
-        set total-deposits (total-deposits - sme-contribution-amount)
+        set total-deposits (four-decimal (total-deposits - sme-contribution-amount))
         print (word "       Total deposits: " initial-total-deposits " -> " total-deposits)
-        set sme-uninsured-deposits-volume (sme-uninsured-deposits-volume - sme-contribution-amount)
-        set equity (equity + sme-contribution-amount)
+        set sme-uninsured-deposits-volume (four-decimal (sme-uninsured-deposits-volume - sme-contribution-amount))
+        set equity (four-decimal (equity + sme-contribution-amount))
       ]
       print(word "       Equity: " initial-equity " -> " equity)
     ][
@@ -725,25 +691,25 @@ to go
       ]
     ]
 
-;    ;; Verificare initiala impotriva insolventei + actionare in situatie de default.
-;    ifelse (is-under-default-risk self)[
-;      print(word "       Is under default-risk? TRUE")
-;      print(word "~~~~~~~ Triggering regulatory processes ~~~~~~~")
-;      try-to-cascade-mitigate-default self
-;    ][
-;      print(word "       Is under default-risk? FALSE \n")
-;    ]
-;
-;    ;; Verificare ulterioara daca banca inca se afla in starea de default. Daca da, ii schimbam starea si marcam ca fiind imprumuturile contractate ca fiind 'nesigure' pentur potentiali cumparatori.
-;    ifelse (is-under-default-risk self)[
-;      print (word "       Still under default risk? TRUE")
-;      set-state-for-bank self STATE-DEFAULT
-;      ask my-in-links [
-;        mark-link-to-default-bank-as-unsellable self
-;      ]
-;    ][
-;      print(word "       Still under default risk? FALSE")
-;    ]
+    ;; Verificare initiala impotriva insolventei + actionare in situatie de default.
+    ifelse (is-under-default-risk self)[
+      print(word "       Is under default-risk? TRUE")
+      print(word "~~~~~~~ Triggering regulatory processes ~~~~~~~")
+      try-to-cascade-mitigate-default self
+    ][
+      print(word "       Is under default-risk? FALSE \n")
+    ]
+
+    ;; Verificare ulterioara daca banca inca se afla in starea de default. Daca da, ii schimbam starea si marcam ca fiind imprumuturile contractate ca fiind 'nesigure' pentur potentiali cumparatori.
+    ifelse (is-under-default-risk self)[
+      print (word "       Still under default risk? TRUE")
+      set-state-for-bank self STATE-DEFAULT
+      ask my-in-links [
+        mark-link-to-default-bank-as-unsellable self
+      ]
+    ][
+      print(word "       Still under default risk? FALSE")
+    ]
 
 ;    ask banks-that-borrowed-affected-one [
 ;;      reduce-interbankassets-of-borrower current-default-bank self
@@ -1358,7 +1324,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-6.0
+11.0
 1
 1
 NIL
@@ -1439,7 +1405,7 @@ deposits-withdrawal-rate
 deposits-withdrawal-rate
 0
 100
-25.0
+30.0
 5
 1
 NIL
