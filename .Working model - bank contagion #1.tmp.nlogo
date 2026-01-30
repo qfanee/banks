@@ -37,9 +37,9 @@ globals [
   started-contagion-interbank-liabilities
   started-contagion-total-deposits
   started-contagion-bank-size
-  rate-of-SME ; Ce procent din totalul depozitelor este din partea SME-urilor. Ipoteza: SME-urile au depozite >100k ; rate-of-sme -> volumul acestor depozite
+  rate-of-SME-uninsured-deposits ; Ce procent din totalul depozitelor este din partea SME ca fiind depozit neasigurat. Ipoteza: SME-urile au depozite >100k
   rate-of-large-companies ; Ce procent din totalul depozitelor este din partea 'large-companies'. Ipoteza: large-companies au depozite >100k
-  ;;Deposits - rate-of-sme * deposits - rate-of-large-companies * deposits = x. Aceste depozite 'x' constituie depozite <100k (ex: 300 depozite <100k)
+  ;;Deposits - rate-of-SME-uninsured-deposits * deposits - rate-of-large-companies * deposits = x. Aceste depozite 'x' constituie depozite <100k (ex: 300 depozite <100k)
   ;;Depozitele <100k nu pot fi folosite pentru mecanisme de 'salvare' a bancii (bail-in)
   ;;;bail-in din partea altor banci = se incearca; daca nu, se merge pe nivelurile urmatoare.
   ;;;bail-in lv1 = se incearca bail-in folosind depozitele celor din 'large-companies'
@@ -55,6 +55,8 @@ globals [
   STATE-HEALTHY
   STATE-LIQUIDITY-CRISIS
   STATE-DEFAULT
+
+  monitor-loans-sold ; Variabila pentru monitorizarea imprumuturilor vandute
 ]
 
 ;; se va incerca vinderea creditelor acordate, pentru cresterea lichiditatii - in situatie de liquidity-crisis
@@ -89,7 +91,7 @@ turtles-own [
 to setup
   set discount-rate (buyer-discount-rate / 100)
   clear-all
-  reset-ticks
+
   ask patches [ set pcolor black ]
   setup-globals
   setup-bank-nonfinancial-states
@@ -104,6 +106,8 @@ to setup
   ;; Initializarea fondului de rezolutie dupa ce fiecare banca a fost initializata, pentru a determina bugetul asigurat de suma de 1% din total depozite asigurate
   ;; Conform Legii 312/2015, aceasata suma nu poate depasi 1% din suma depozitelor asigurate
   set fund-resolution-budget (four-decimal (0.01 * sum [insured-deposits] of turtles))
+
+  reset-ticks
 end
 
 ;;Fn setup-globals - initializarea var. globale;
@@ -112,13 +116,15 @@ to setup-globals
   set computation-precision 4
   set visited-default-banks []
   set already-default-banks []
-  set rate-of-SME .1
+  set rate-of-SME-uninsured-deposits .1
   set rate-of-large-companies .01
   set discount-rate (buyer-discount-rate / 100)
   set deposit-withdrawal-rate (deposits-withdrawal-rate / 100)
   set STATE-HEALTHY "HEALTHY"
   set STATE-LIQUIDITY-CRISIS "LIQUIDITY-CRISIS"
   set STATE-DEFAULT "DEFAULT"
+
+  set monitor-loans-sold 0
 end
 
 to setup-bank-nonfinancial-states
@@ -258,20 +264,20 @@ to setup-bank-financial-states
     ;; self -> bank
     let number-of-outs count (my-out-links)
     ifelse number-of-outs = 0 [
-      set liquid-assets (four-decimal (0.5 * target-total-assets))
+      set liquid-assets (four-decimal (0.30 * target-total-assets))
       set interbank-assets 0
     ]
     [
-      set liquid-assets (four-decimal (0.35 * target-total-assets))
+      set liquid-assets (four-decimal (0.30 * target-total-assets))
       set interbank-assets (four-decimal (0.20 * target-total-assets))
     ]
     ;; Activele nelichide se vor initializa cu remainder-ul dintre pasive totale - active curente => active nelichide (pentru a mentine active totale=pasive totale).
-    ;; Practic, valoarea acestui activ va fi 60% din target-total, sau 45% din target-total
+    ;; Practic, valoarea acestui activ va fi 70% din target-total, sau 50% din target-total
     set illiquid-assets four-decimal ( (equity + total-deposits + interbank-liabilities) - (liquid-assets + interbank-assets) )
 
-    set sme-uninsured-deposits-volume (four-decimal (rate-of-SME * total-deposits))
+    set sme-uninsured-deposits-volume (four-decimal (rate-of-SME-uninsured-deposits * total-deposits))
     set large-companies-uninsured-deposits-volume (four-decimal (rate-of-large-companies * total-deposits))
-    set insured-deposits (four-decimal (total-deposits * (1 - (rate-of-SME + rate-of-large-companies))))
+    set insured-deposits (four-decimal (total-deposits * (1 - (rate-of-SME-uninsured-deposits + rate-of-large-companies))))
     let asset-minus-liabilities (four-decimal ( (illiquid-assets + liquid-assets + interbank-assets) - (interbank-liabilities + total-deposits + equity) ))
     print (word "    Assets - Liabilities: " asset-minus-liabilities)
     print (word "    Iliquid assets: " illiquid-assets)
@@ -386,54 +392,6 @@ to cut-interbankassets-if-lent-towards-default [affected-bank]
     set equity four-decimal (equity - total-asset-loss)
     set interbank-assets updated-with-loss-interbank-assets
     print (word "     Interbank-assets: " initial-interbank-assets " -> " updated-with-loss-interbank-assets " | Equity: " initial-equity " -> " equity)
-  ]
-end
-
-; A default; A -> B
-; Mark only if link was not visited already
-to color-dbank-out-links [d-bank]
-  print (word " #################### MARKING WITH YELLOW OUTGOING FROM: " d-bank)
-  ask [my-out-links] of d-bank [
-    if color != red [set color yellow] ; mark the fact that the links with the banks that have been borrowed has been affected; The curr.-def.-turtle's lend will be sold to another bank
-  ]
-end
-
-; A default; A <- B
-to color-dbank-in-links [d-bank]
-  ask [my-in-links] of d-bank [
-    if color != yellow [set color red]
-  ]
-end
-
-; Check if non-d-bank enters default if  non-d-bank -> d-bank.
-to check-if-defaults-other [non-d-bank]
-  ask non-d-bank [
-
-    ; Check if there is any bank that borrowed non-d; If so, try to bail-in using them.     non-d-bank <- B
-    let banks-that-borrowed-me in-link-neighbors
-    print ("")
-    if color = blue [
-      print(word "                Contaminated bank: " self)
-
-      ifelse (is-under-default-risk non-d-bank)[
-        print ("Trying to save the bank using the regulatory mechanisms.")
-        try-to-cascade-mitigate-default non-d-bank
-
-        ; Check again if under the risk of being defaulted. If not, mark it.
-        if (is-under-default-risk non-d-bank = false) [
-          print ("Bank was saved using the regulatory mechanisms.")
-          set color orange
-        ]
-      ][
-        print("Bank was affected, but not defaulted!")
-      ]
-
-      if (is-under-default-risk non-d-bank)[
-        print("Bank will be in default!")
-        set will-be-in-default true
-        set already-default-banks lput self already-default-banks
-      ]
-    ]
   ]
 end
 
@@ -685,14 +643,14 @@ to go
       set-state-for-bank self STATE-DEFAULT
       mark-link-to-default-bank-as-unsellable self
     ][
-      ifelse (is-under-liquidity-risk self)[
-        print (word "       Auditing bank " self " as liquidity-crisis state after final audit checks")
-        set-state-for-bank self STATE-LIQUIDITY-CRISIS
-        mark-link-to-liquidity-crisis-as-unsellable self
-      ][
-        set-state-for-bank self STATE-HEALTHY
-        mark-link-to-self-as-sellable self
-      ]
+;      ifelse (is-under-liquidity-risk self)[
+;        print (word "       Auditing bank " self " as liquidity-crisis state after final audit checks")
+;        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+;        mark-link-to-liquidity-crisis-as-unsellable self
+;      ][
+;        set-state-for-bank self STATE-HEALTHY
+;        mark-link-to-self-as-sellable self
+;      ]
     ]
   ]
 
@@ -736,7 +694,7 @@ to go
       mark-link-to-self-as-sellable self
     ]
 
-    ;; Verificare initiala impotriva insolventei + actionare in situatie de default.
+    ; Verificare initiala impotriva insolventei + actionare in situatie de default.
     ifelse (is-under-default-risk self)[
       print(word "       Is under default-risk? TRUE")
       print(word "~~~~~~~ Triggering regulatory processes ~~~~~~~")
@@ -823,8 +781,6 @@ to-report is-under-liquidity-risk [bank]
   ask bank [
     let immediate-deposit-demand (four-decimal (total-deposits * deposit-withdrawal-rate))
     let immediate-interbank-liabilities-demand (four-decimal (sum [weight] of my-in-links with [link-loan-type = "short-term"]))
-
-    print (word "INTERBANK LIABILITIES. ALL: " interbank-liabilities " | IMMEDIATE: " immediate-interbank-liabilities-demand)
 
     if (liquid-assets < (four-decimal (immediate-interbank-liabilities-demand + immediate-deposit-demand)) ) [
       set maybe-liquidity-risk true
@@ -996,7 +952,8 @@ to set-and-update-new-link [bank-that-buys-loan old-loan]
       ;; Daca exista, actualizam arcul curent cu noile valori
       ask existing-link [
         set weight (four-decimal (weight + [weight] of old-loan))
-        set color yellow ;; Highlight that this link grew
+        set color green
+        set thickness (thickness + 0.1) ;; Evidentiem faptul ca arcul existent este actualizat cu noua valoare
         ;; Setam o medie a ratelor, pentru usurinta calculelor
         set link-interest-rate (four-decimal ([link-interest-rate] of old-loan / link-interest-rate))
       ]
@@ -1037,6 +994,8 @@ to sell-granted-loans [potential-liquidity-crisis-bank]
             ask self[
               set color yellow
             ]
+            ;; Contorizam imprumutul vandut
+            set monitor-loans-sold (monitor-loans-sold + 1)
             set-and-update-new-link buyer self
             update-buyer-of-loan buyer weight
             update-seller-of-loan potential-liquidity-crisis-bank weight
@@ -1151,7 +1110,7 @@ number-of-banks
 number-of-banks
 2
 80
-23.0
+32.0
 1
 1
 NIL
@@ -1188,7 +1147,7 @@ count turtles with [ color = red ]
 PLOT
 44
 366
-266
+390
 548
 Defaulted Banks
 t
@@ -1198,12 +1157,12 @@ Defaulted Banks
 0.0
 10.0
 true
-false
+true
 "" ""
 PENS
 "Default" 1.0 0 -2674135 true "" "plot count turtles with [ color = red ]"
-"Non-default banks" 1.0 0 -13791810 true "" "plot count turtles with [ color = blue]"
-"pen-2" 1.0 0 -817084 true "" "plot count turtles with [ color = orange]"
+"Healthy" 1.0 0 -13791810 true "" "plot count turtles with [ color = blue]"
+"Liquidity-crisis banks" 1.0 0 -817084 true "" "plot count turtles with [ color = orange]"
 
 INPUTBOX
 269
@@ -1245,17 +1204,6 @@ MONITOR
 337
 Government-saved banks
 count turtles with [color = green]
-17
-1
-11
-
-MONITOR
-883
-343
-1155
-388
-Non-defaulted banks without gov. intervention
-count turtles with [color = blue]
 17
 1
 11
@@ -1350,7 +1298,7 @@ deposits-withdrawal-rate
 deposits-withdrawal-rate
 0
 100
-30.0
+40.0
 5
 1
 NIL
@@ -1365,24 +1313,53 @@ short-loan-ratio
 short-loan-ratio
 0
 100
-50.0
+20.0
 1
 1
 NIL
 HORIZONTAL
 
 PLOT
-1199
-80
-1399
-230
-Fond garantare 
+1217
+45
+1377
+195
+Imprumuturi vandute
 NIL
 NIL
 0.0
 30.0
 0.0
-1000.0
+20.0
+true
+false
+"" ""
+PENS
+"monitor-loans-sold" 1.0 0 -7500403 true "" "plot monitor-loans-sold"
+
+MONITOR
+885
+364
+1104
+409
+Sold loans throughout the simulation
+count links with [color = yellow]
+17
+1
+11
+
+PLOT
+1216
+226
+1416
+376
+Buget FGDB
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
 true
 false
 "" ""
