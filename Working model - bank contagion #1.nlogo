@@ -25,7 +25,8 @@ links-own [
 
 globals [
   discount-rate
-  deposit-withdrawal-rate
+  panic-deposit-withdrawal-rate
+  baseline-deposit-withdrawal-rate
   visited-default-banks
   already-default-banks
   buffer
@@ -119,7 +120,8 @@ to setup-globals
   set rate-of-SME-uninsured-deposits .1
   set rate-of-large-companies-uninsured-deposits .01
   set discount-rate (buyer-discount-rate / 100)
-  set deposit-withdrawal-rate (deposits-withdrawal-rate / 100)
+  set panic-deposit-withdrawal-rate (four-decimal (panic-deposits-withdrawal-rate / 100))
+  set baseline-deposit-withdrawal-rate (four-decimal (baseline-deposits-withdrawal-rate / 100))
   set STATE-HEALTHY "HEALTHY"
   set STATE-LIQUIDITY-CRISIS "LIQUIDITY-CRISIS"
   set STATE-DEFAULT "DEFAULT"
@@ -643,16 +645,39 @@ to go
       set-state-for-bank self STATE-DEFAULT
       mark-link-to-default-bank-as-unsellable self
     ][
-;      ifelse (is-under-liquidity-risk self)[
-;        print (word "       Auditing bank " self " as liquidity-crisis state after final audit checks")
-;        set-state-for-bank self STATE-LIQUIDITY-CRISIS
-;        mark-link-to-liquidity-crisis-as-unsellable self
-;      ][
-;        set-state-for-bank self STATE-HEALTHY
-;        mark-link-to-self-as-sellable self
-;      ]
+      ifelse (is-under-liquidity-risk self)[
+        print (word "       Auditing bank " self " as liquidity-crisis after final audit checks. Its neighbors will be looped through next iteration")
+        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+        mark-link-to-default-bank-as-unsellable self
+      ][
+        set-state-for-bank self STATE-HEALTHY
+        mark-link-to-self-as-sellable self
+      ]
     ]
   ]
+
+  ;; Procedura de mai jos este responsabila pentru
+  ;:   - transformarea din active ilichide -> active lichide
+  ;;   - retragere depozite de catre clienti - 5% in conditii normale, withdrawal-rate% in conditii de stres (vecin cu o banca afectata)
+  ask turtles with [state != STATE-DEFAULT] [
+
+    recover-maturity-from-iliquid-assets self
+
+    let current-rate (four-decimal baseline-deposit-withdrawal-rate) ;; The baseline "healthy" withdrawal rate
+
+    ;; Setam rate-ul cu care depozitele vor fi retrase in functie de vecini - daca unul dintre vecini este DEFAULT, va interveni PANIC WITHDRAWAL
+    ifelse any? out-link-neighbors with [state = STATE-DEFAULT] [
+      set current-rate panic-deposit-withdrawal-rate
+      print (word "!!! PANIC withdrawals for " self ": " (four-decimal (current-rate * 100)) "% run due to neighbor default.")
+    ][
+      print (word "!!! NORMAL withdrawals for " self ": " (four-decimal (current-rate * 100)) "% run.")
+    ]
+
+    ;; Procesul de retragere al depozitelor (daca activele lichide nu sunt suficiente, un prim proces de fire-sell-assets se va declansa aici)
+    pay-depositors self current-rate
+    print ("")
+  ]
+
 
   ;; Sursa infectiei pentru iteratia curenta, bazandu-ne pe rezultatul iteratiei precedente. (it1 = exogenous, vf vecini, it2 = vecini + cele care au intrat in default pe urma exogenous shock, it3 = ...)
   let current-iteration-default-banks turtles with [state = STATE-DEFAULT and not member? self visited-default-banks]
@@ -729,6 +754,30 @@ to go
  tick
 end
 
+;; Fn helper ce va transforma 2% active ilichide in active lichide, la fiecare tick. De asemenea, aceasta suma proportionala are o dobanda de 1% pe care banca o incaseaza sub forma de equity.
+;; NET INTEREST MARGIN docs
+to recover-maturity-from-iliquid-assets [bank]
+  let initial-illiquid-assets [illiquid-assets] of bank
+  let initial-liquid-assets [liquid-assets] of bank
+
+  ask bank [
+    ;; Suma recuperata din activele ilichide, fixata la 2% per fiecare tick.
+    let matured-amount (four-decimal (illiquid-assets * 0.02))
+
+    ;; Actualizam activele + equity
+    if matured-amount > 0 [
+      set illiquid-assets (four-decimal (illiquid-assets - matured-amount))
+      set liquid-assets (four-decimal (liquid-assets + matured-amount))
+
+      ;; Dobanda va fi marcata ca fiind o crestere in equity.
+      let net-interest-margin 0.01
+      set equity (four-decimal (equity + (matured-amount * net-interest-margin)))
+    ]
+
+    print (word "   Illiquid-assets have matured. Illiquid-assets: " initial-illiquid-assets " -> " illiquid-assets " | Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
+  ]
+end
+
 to set-state-for-bank [bank to-state]
   ifelse (to-state = STATE-HEALTHY or to-state = STATE-LIQUIDITY-CRISIS or to-state = STATE-DEFAULT)[
     ask bank[
@@ -742,8 +791,16 @@ to set-state-for-bank [bank to-state]
   ][
     error "Incorrect state used for bank!"
   ]
+end
 
-
+;; Fn helper ce va calcula depozitele care vor fi retrase din cauza fricii civile.
+to-report withdrawal-demand [bank]
+  let immediate-deposits-withdrawal-required 0
+  ask bank [
+    set immediate-deposits-withdrawal-required (four-decimal (four-decimal (panic-deposit-withdrawal-rate) * (four-decimal total-deposits) ) )
+    print (word "Withdrawal rate: " panic-deposit-withdrawal-rate " | Total-deposits: " total-deposits " | Immediate deposits withdrawal: " immediate-deposits-withdrawal-required " | Available to pay: " liquid-assets)
+  ]
+  report immediate-deposits-withdrawal-required
 end
 
 ;; Fn ce verifica bilantul contabil la sfarsitul unui tick, pentru fiecare banca. Daca 'capitalurile proprii' sunt <0, inseamna ca banca nu
@@ -775,18 +832,22 @@ to-report is-under-default-risk [bank]
 end
 
 ;;Fn ce verifica daca o banca este in criza de lichiditate (in acest nivel, va vinde creditele date pentru cresterea lichiditatii);;
+;; - in situatia in care banca curenta este vecina (current -> default) cu o banca default, aceasta va resimti 'panic-deposit-demand' si nu va putea cumpara din lipsa de lichiditate
+;; - in situatia in care banca curenta nu este vecina cu niciuna default, riscul de lichiditate va fi calculat in functie de 5% din total depozit
 to-report is-under-liquidity-risk [bank]
   let maybe-liquidity-risk false
-  print (word "Checking bank: " bank)
   ask bank [
-    let immediate-deposit-demand (four-decimal (total-deposits * deposit-withdrawal-rate))
+    let withdrawal-rate baseline-deposit-withdrawal-rate
+    if any? out-link-neighbors with [state = STATE-DEFAULT] [
+      set withdrawal-rate panic-deposit-withdrawal-rate
+    ]
+    let immediate-deposit-demand (four-decimal (withdrawal-rate * total-deposits))
     let immediate-interbank-liabilities-demand (four-decimal (sum [weight] of my-in-links with [link-loan-type = "short-term"]))
 
     if (liquid-assets < (four-decimal (immediate-interbank-liabilities-demand + immediate-deposit-demand)) ) [
       set maybe-liquidity-risk true
     ]
   ]
-
   report maybe-liquidity-risk
 end
 
@@ -982,7 +1043,7 @@ to sell-granted-loans [potential-liquidity-crisis-bank]
 
         if ([state] of end2 = STATE-HEALTHY)[
           let amount-required (four-decimal (weight - weight * discount-rate) )
-          print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: :" amount-required)
+          print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: " amount-required)
 
           let buyer find-random-potential-buyer-for-loan self amount-required
 
@@ -1005,6 +1066,113 @@ to sell-granted-loans [potential-liquidity-crisis-bank]
         ]
       ]
     ]
+  ]
+end
+
+;; Fn helper ce incearca acoperirea (plata) depozitelor. In situatia in care aceasta banca nu are destule active lichide pentru a acoperi depozitele imediate,
+;;; aceasta va intra in procesul de fire-sell assets pentru a capata lichiditate. Fire-sell-assets se va intampla la un discount rate de %-discount-rate.
+to pay-depositors [potential-unable-to-pay-deposits-bank current-rate]
+
+  ask potential-unable-to-pay-deposits-bank [
+
+    ;; Initializam suma depozitelor care trebuie acoperita
+    let immediate-deposit-demand (four-decimal (total-deposits * current-rate))
+
+    ;; Prima data se vor epuiza activele lichide
+    let available-liquid-cash-payment (min (list liquid-assets immediate-deposit-demand))
+
+    print (word "   Total demand-amount from deposits: " immediate-deposit-demand " | Total liquidity to pay: " liquid-assets " | Total available in interbank-assets: " interbank-assets)
+
+    if available-liquid-cash-payment > 0 [
+      let eff-rate (available-liquid-cash-payment / total-deposits)
+      reduce-deposits-proportionally self eff-rate available-liquid-cash-payment
+      set liquid-assets (four-decimal (liquid-assets - available-liquid-cash-payment))
+
+      print (word "   Paid amount: " available-liquid-cash-payment " from liquid-assets. New liquid-assets: " liquid-assets)
+    ]
+
+    set immediate-deposit-demand (four-decimal (immediate-deposit-demand - available-liquid-cash-payment))
+
+    ;; Ulterior, daca activele lichide nu au fost suficiente, banca curenta va intra in procesul de fire-sell-assets pentru a capata destula lichiditate pentru acoperirea depozitelor
+    if (immediate-deposit-demand > 0) [
+      print (word "   Selling interbank-assets to cover immediate-demand is required. Total demand-amount from deposits: " immediate-deposit-demand " | Total liquidity to pay: " liquid-assets " | Total available in interbank-assets: " interbank-assets)
+
+      ask my-out-links with [is-sellable = true] [
+
+        ;; Daca banca curenta inca nu poate acoperi depozitele la termen, continuam sa vindem imprumuturi pentru cresterea lichiditatii pana cand valoarea necesara e atinsa.
+        if ([liquid-assets] of potential-unable-to-pay-deposits-bank < immediate-deposit-demand)[
+
+          ;; Vindem doar acele imprumuturi care nu sunt riscante
+          if ([state] of end2 = STATE-HEALTHY)[
+            let amount-for-deposit (four-decimal (weight - weight * discount-rate) )
+            print (word "       Trying to sell " self " loan. Weight amount: " weight "; Selling for: " amount-for-deposit)
+
+            let buyer find-random-potential-buyer-for-loan self amount-for-deposit
+
+            ;; Trebuie updatate valorile pentru cel care a vandut (liquid-assets), dar si cel care a cumparat (liquid-assets + many more)
+            ifelse buyer != nobody [
+              print (word "         Sold loan between " self " to " buyer)
+
+              ;; Setam culoarea imprumutului care va fi 'vandut' cu galben
+              ask self[
+                set color yellow
+              ]
+              ;; Contorizam imprumutul vandut
+              set monitor-loans-sold (monitor-loans-sold + 1)
+              set-and-update-new-link buyer self
+              update-buyer-of-loan buyer weight
+              update-seller-of-loan potential-unable-to-pay-deposits-bank weight
+
+              ;; Determinam valoarea depozitelor care va fi acoperita.
+              let payment-to-depositors (min (list amount-for-deposit immediate-deposit-demand))
+
+              ;; Reducem depozitele cu valoarea pe care banca a obtinut-o in urma vanzarii unui interbank-asset (vanzarea unui imprumut acordat)
+              let sale-eff-rate (payment-to-depositors / [total-deposits] of potential-unable-to-pay-deposits-bank)
+              reduce-deposits-proportionally potential-unable-to-pay-deposits-bank sale-eff-rate payment-to-depositors
+
+              ;; Reducem activele lichide cu suma pe care banca a platit-o pentru acoperirea depozitelor.
+              ask potential-unable-to-pay-deposits-bank [
+                print (word "      Liquid-assets after sells: " liquid-assets)
+                set liquid-assets (four-decimal (liquid-assets - payment-to-depositors))
+                print (word "      Liquid-assets with subtracted: " liquid-assets)
+              ]
+
+              ;; Actualizam cererea de depozite scazand suma platita de catre banca din activele lichide, dupa vanzarea unui imprumut
+              set immediate-deposit-demand (four-decimal (immediate-deposit-demand - payment-to-depositors))
+              print (word "        Deposit gap updated. Remaining immediate deposit demand: " immediate-deposit-demand)
+            ][
+              print (word "         No buyer found for loan " self)
+            ]
+          ]
+        ]
+      ]
+    ]
+  ]
+end
+
+;; Fn helper ce reduce depozitele banci intr-un mod proportional, in functie de 'rate', avand in vedere activele lichide folosite (cash-paid)
+to reduce-deposits-proportionally [bank rate cash-paid]
+  ask bank [
+    print (word "     Initial deposit props: Deposits " total-deposits ", from which: | Insured deposits: " insured-deposits " | SME uninsured: " sme-uninsured-deposits-volume " | Large uninsured: " large-companies-uninsured-deposits-volume)
+    set insured-deposits (four-decimal (insured-deposits * (1 - rate)))
+    set sme-uninsured-deposits-volume (four-decimal (sme-uninsured-deposits-volume * (1 - rate)))
+    set large-companies-uninsured-deposits-volume (four-decimal (large-companies-uninsured-deposits-volume * (1 - rate)))
+    set total-deposits (four-decimal (total-deposits - cash-paid))
+    print (word "     Updated deposit props: Deposits " total-deposits ", from which: | Insured deposits: " insured-deposits " | SME uninsured: " sme-uninsured-deposits-volume " | Large uninsured: " large-companies-uninsured-deposits-volume)
+  ]
+end
+
+to reduce-deposits-with [bank amount]
+  ask bank [
+    print (word "Initial deposit props: Deposits " total-deposits " | Insured deposits: " insured-deposits " | SME uninsured: " sme-uninsured-deposits-volume " | Large uninsured: " large-companies-uninsured-deposits-volume)
+
+    let effective-rate (four-decimal (amount / total-deposits) )
+    set insured-deposits (four-decimal (insured-deposits * (1 - effective-rate)))
+    set sme-uninsured-deposits-volume (four-decimal (sme-uninsured-deposits-volume * (1 - effective-rate)))
+    set large-companies-uninsured-deposits-volume (four-decimal (large-companies-uninsured-deposits-volume * (1 - effective-rate)))
+    set total-deposits (four-decimal (total-deposits - amount) )
+
+    print (word "Updated deposit props: Deposits " total-deposits " | Insured deposits: " insured-deposits " | SME uninsured: " sme-uninsured-deposits-volume " | Large uninsured: " large-companies-uninsured-deposits-volume)
   ]
 end
 
@@ -1047,10 +1215,10 @@ to-report get-interest-rate [bank loanType]
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-407
-10
-870
-474
+514
+25
+977
+489
 -1
 -1
 13.0
@@ -1091,10 +1259,10 @@ NIL
 1
 
 MONITOR
-884
-61
-973
-106
+1022
+118
+1111
+163
 Total vertices
 count links
 3
@@ -1134,10 +1302,10 @@ NIL
 1
 
 MONITOR
-884
-190
-975
-235
+1022
+247
+1113
+292
 Defaulted Banks
 count turtles with [ color = red ]
 17
@@ -1165,10 +1333,10 @@ PENS
 "Liquidity-crisis banks" 1.0 0 -817084 true "" "plot count turtles with [ color = orange]"
 
 INPUTBOX
-269
-271
-319
-331
+282
+295
+332
+355
 mu
 0.0
 1
@@ -1176,10 +1344,10 @@ mu
 Number
 
 INPUTBOX
-331
-271
-381
-332
+344
+295
+394
+356
 sigma
 1.0
 1
@@ -1187,10 +1355,10 @@ sigma
 Number
 
 MONITOR
-883
-241
-1041
-286
+1021
+298
+1179
+343
 Total non-defaulted Banks
 count turtles with [ color != red ]
 17
@@ -1198,10 +1366,10 @@ count turtles with [ color != red ]
 11
 
 MONITOR
-883
-292
-1038
-337
+1021
+349
+1176
+394
 Government-saved banks
 count turtles with [color = green]
 17
@@ -1217,7 +1385,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-7.0
+20.0
 1
 1
 NIL
@@ -1275,10 +1443,10 @@ NIL
 1
 
 SLIDER
-269
-186
-396
-219
+273
+216
+400
+249
 buyer-discount-rate
 buyer-discount-rate
 10
@@ -1290,30 +1458,30 @@ NIL
 HORIZONTAL
 
 SLIDER
-268
-150
-397
-183
-deposits-withdrawal-rate
-deposits-withdrawal-rate
+272
+180
+453
+213
+panic-deposits-withdrawal-rate
+panic-deposits-withdrawal-rate
 0
 100
-40.0
+20.0
 5
 1
 NIL
 HORIZONTAL
 
 SLIDER
-269
-225
-397
-258
+273
+255
+401
+288
 short-loan-ratio
 short-loan-ratio
 0
 100
-20.0
+5.0
 1
 1
 NIL
@@ -1338,10 +1506,10 @@ PENS
 "monitor-loans-sold" 1.0 0 -7500403 true "" "plot monitor-loans-sold"
 
 MONITOR
-885
-364
-1104
-409
+1023
+421
+1242
+466
 Sold loans throughout the simulation
 count links with [color = yellow]
 17
@@ -1365,6 +1533,21 @@ false
 "" ""
 PENS
 "default" 1.0 0 -16777216 true "" "plot fund-resolution-budget"
+
+SLIDER
+271
+142
+454
+175
+baseline-deposits-withdrawal-rate
+baseline-deposits-withdrawal-rate
+0
+10
+5.0
+1
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
