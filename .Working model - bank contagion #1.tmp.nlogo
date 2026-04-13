@@ -28,16 +28,8 @@ globals [
   panic-deposit-withdrawal-rate
   baseline-deposit-withdrawal-rate
   visited-default-banks
-  already-default-banks
-  buffer
   banks-max-size
   banks-min-size
-  started-contagion-liquid-assets
-  started-contagion-interbank-assets
-  started-contagion-illiquid-assets
-  started-contagion-interbank-liabilities
-  started-contagion-total-deposits
-  started-contagion-bank-size
   rate-of-SME-uninsured-deposits ; Ce procent din totalul depozitelor este din partea SME ca fiind depozit neasigurat. Ipoteza: SME-urile au depozite >100k
   rate-of-large-companies-uninsured-deposits ; Ce procent din totalul depozitelor este din partea 'large-companies'. Ipoteza: large-companies au depozite >100k
   ;;Deposits - rate-of-SME-uninsured-deposits * deposits - rate-of-large-companies-uninsured-deposits * deposits = x. Aceste depozite 'x' constituie depozite <100k (ex: 300 depozite <100k)
@@ -46,9 +38,8 @@ globals [
   ;;;bail-in lv1 = se incearca bail-in folosind depozitele celor din 'large-companies'
   ;;;bail-in lv2 = se incearca bail-in folosind depozitele celor din SME
   ;;;bail-in lv3 = se incearca bail-in folosind toate depozitele, indiferent ca sunt >100k sau <100k, sau ca vin de la micro, SME, large-companies
-  ;;;bailout     = interventia guvernamentala, folosind taxele colectate
+  ;;;bailout     = interventia guvernamentala, folosind fonduri rezolutie bancara cf lege 312/2015
   possible-loan-types ; only short-term and long-term allowed
-  computation-precision ; how many decimals are after the floating point
   default-max-banks-reached ; how many banks entered the default; if all of them are in default state, stop the execution of the program
   fund-resolution-budget ; Bugetul fondului de rezolutie -> va fi suma dintre 1% din totalul depozitelor ASIGURATE ale fiecarei banci
 
@@ -68,8 +59,6 @@ globals [
 
 turtles-own [
   state
-  has-started-contagion ; Exprima daca din cauza agentului curent a inceput contagiunea financiara
-  will-be-in-default ; Exprima daca banca va intra in stare default in cadrul urmatoarelor tickuri. Daca da, o excludem din partea de imprumuturi etc. (la 'go')
   interbank-assets ; Activele interbancare
   illiquid-assets ; Active bancare cu lichidate redusa
   liquid-assets   ; Active bancare lichide
@@ -114,9 +103,7 @@ end
 ;;Fn setup-globals - initializarea var. globale;
 to setup-globals
   set possible-loan-types ["short-term" "long-term"]
-  set computation-precision 4
   set visited-default-banks []
-  set already-default-banks []
   set rate-of-SME-uninsured-deposits .1
   set rate-of-large-companies-uninsured-deposits .01
   set discount-rate (buyer-discount-rate / 100)
@@ -137,8 +124,6 @@ to setup-bank-nonfinancial-states
 
   ask turtles [
     set state STATE-HEALTHY
-    set has-started-contagion false
-    set will-be-in-default false
     set reached-max-possible-connectivity false
     set max-node-connectivity max-connectivity-node-may-have
     set interest-rate-map table:make
@@ -342,12 +327,6 @@ to distribute-interbank-assets [currentTurtle]
         set link-interest-rate four-decimal (get-interest-rate currentTurtle link-loan-type)
       ]
     ]
-  ]
-end
-
-to push-to-sell-loans-list [default-bank]
-  if not member? default-bank already-default-banks [
-    set already-default-banks lput default-bank already-default-banks
   ]
 end
 
@@ -648,7 +627,7 @@ to go
       ifelse (is-under-liquidity-risk self)[
         print (word "       Auditing bank " self " as liquidity-crisis after final audit checks. Its neighbors will be looped through next iteration")
         set-state-for-bank self STATE-LIQUIDITY-CRISIS
-        mark-link-to-default-bank-as-unsellable self
+        mark-link-to-liquidity-crisis-as-unsellable self
       ][
         set-state-for-bank self STATE-HEALTHY
         mark-link-to-self-as-sellable self
@@ -734,21 +713,25 @@ to go
       set-state-for-bank self STATE-DEFAULT
       mark-link-to-default-bank-as-unsellable self
     ][
-
       print(word "       Still under default risk? FALSE")
+      if (is-under-liquidity-risk self)[
+        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+        mark-link-to-liquidity-crisis-as-unsellable self
+      ]
     ]
   ]
 
   ;; 'Impingem' toate bancile ce au fost in default in iteratia curenta ca fiind deja 'vizitate' de catre vecinii acestora.
   ask current-iteration-default-banks [
     set visited-default-banks lput self visited-default-banks
+    set defaulted-this-iteration lput self defaulted-this-iteration
     set-state-for-bank self STATE-DEFAULT
     mark-link-to-default-bank-as-unsellable self
   ]
 
   print(word "Defaulted-this-iteration: " defaulted-this-iteration)
 
-; if ticks = 20 [stop]
+ if ticks = 50 [stop]
  if ( (count turtles with [state = STATE-DEFAULT]) = number-of-banks) [
     set default-max-banks-reached true
   ]
@@ -858,15 +841,7 @@ end
 
 to initial-default-setup-for [ default-agent ]
   ask default-agent [
-    set has-started-contagion true
-    set started-contagion-interbank-assets interbank-assets
-    set started-contagion-liquid-assets liquid-assets
-    set started-contagion-illiquid-assets illiquid-assets
-    set started-contagion-interbank-liabilities interbank-liabilities
-    set started-contagion-total-deposits total-deposits
-    set started-contagion-bank-size bank-size
     set liquid-assets 0
-
     ifelse (is-under-default-risk self = true)[
       set-state-for-bank self STATE-DEFAULT
     ][
@@ -1216,13 +1191,13 @@ to-report get-interest-rate [bank loanType]
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-514
-25
-977
-489
+465
+10
+1066
+612
 -1
 -1
-13.0
+16.943
 1
 10
 1
@@ -1260,10 +1235,10 @@ NIL
 1
 
 MONITOR
-1022
-118
-1111
-163
+1068
+191
+1157
+236
 Total vertices
 count links
 3
@@ -1303,10 +1278,10 @@ NIL
 1
 
 MONITOR
-1022
-247
-1113
-292
+1070
+246
+1161
+291
 Defaulted Banks
 count turtles with [ color = red ]
 17
@@ -1356,10 +1331,10 @@ sigma
 Number
 
 MONITOR
-1021
-298
-1179
-343
+1069
+302
+1227
+347
 Total non-defaulted Banks
 count turtles with [ color != red ]
 17
@@ -1367,10 +1342,10 @@ count turtles with [ color != red ]
 11
 
 MONITOR
-1021
-349
-1176
-394
+1069
+353
+1275
+398
 Government-saved banks
 count turtles with [color = green]
 17
@@ -1386,7 +1361,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-20.0
+32.0
 1
 1
 NIL
@@ -1399,7 +1374,7 @@ BUTTON
 361
 go
 go
-NIL
+T
 1
 T
 OBSERVER
@@ -1452,7 +1427,7 @@ buyer-discount-rate
 buyer-discount-rate
 10
 30
-13.0
+10.0
 1
 1
 NIL
@@ -1467,7 +1442,7 @@ panic-deposits-withdrawal-rate
 panic-deposits-withdrawal-rate
 0
 100
-20.0
+45.0
 5
 1
 NIL
@@ -1482,17 +1457,17 @@ short-loan-ratio
 short-loan-ratio
 0
 100
-5.0
+25.0
 1
 1
 NIL
 HORIZONTAL
 
 PLOT
-1217
-45
-1377
-195
+1291
+461
+1486
+611
 Imprumuturi vandute
 NIL
 NIL
@@ -1507,10 +1482,10 @@ PENS
 "monitor-loans-sold" 1.0 0 -7500403 true "" "plot monitor-loans-sold"
 
 MONITOR
-1023
-421
-1242
-466
+1071
+405
+1273
+450
 Sold loans throughout the simulation
 count links with [color = yellow]
 17
@@ -1518,10 +1493,10 @@ count links with [color = yellow]
 11
 
 PLOT
-1216
-226
-1416
-376
+1074
+461
+1274
+611
 Buget FGDB
 NIL
 NIL
@@ -1549,6 +1524,27 @@ baseline-deposits-withdrawal-rate
 1
 NIL
 HORIZONTAL
+
+PLOT
+1073
+10
+1502
+160
+Bilant contabil banci
+Banks
+Value
+0.0
+32.0
+0.0
+10.0
+true
+false
+"" "let i 0\n\nforeach sort turtles [ t ->\n  ask t [\n    ;; --- BAR 1: ASSETS (Stacked & Filled) ---\n    let total-assets (interbank-assets + liquid-assets + illiquid-assets)\n    \n    ;; 1. Draw Total Assets (This fills the bottom to the very top)\n    set-current-plot-pen \"Illiquid\"\n    plotxy i total-assets\n    \n    ;; 2. Draw Liquid + Interbank (Overwrites the bottom part of the bar)\n    set-current-plot-pen \"Interbank\"\n    plotxy i (total-assets - interbank-assets)\n    \n    ;; 3. Draw Liquid only (Overwrites the very bottom)\n    set-current-plot-pen \"Liquid\"\n    plotxy i (total-assets - interbank-assets - illiquid-assets)\n\n    ;; --- BAR 2: DEPOSITS (Adjacent bar) ---\n    set-current-plot-pen \"Deposits\"\n    plotxy (i + 1) total-deposits\n  ]\n  ;; Move the cursor forward for the next bank (leaving a gap)\n  set i (i + 3)\n]\n\n"
+PENS
+"Illiquid" 1.0 1 -16777216 true "" ""
+"Interbank" 1.0 1 -2139308 true "" ""
+"Liquid" 1.0 1 -5825686 true "" ""
+"Deposits" 1.0 1 -2674135 true "" ""
 
 @#$#@#$#@
 ## WHAT IS IT?
