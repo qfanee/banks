@@ -618,22 +618,22 @@ to go
 
   ;; Verificare de siguranta - bilant contabil pentru toate - verificam daca exista altele care trebuie sa intre in default/criza lichiditate, in functie de modificarile de pe tickul anterior
   ;; Auditare globală asupra tuturor băncilor care sunt încă active
-  ask turtles with [state != STATE-DEFAULT] [
-    ifelse (is-under-default-risk self)[
-      print (word "       Auditing bank " self " as default-state after final audit checks. Its neighbors will be looped through next iteration")
-      set-state-for-bank self STATE-DEFAULT
-      mark-link-to-default-bank-as-unsellable self
-    ][
-      ifelse (is-under-liquidity-risk self)[
-        print (word "       Auditing bank " self " as liquidity-crisis after final audit checks. Its neighbors will be looped through next iteration")
-        set-state-for-bank self STATE-LIQUIDITY-CRISIS
-        mark-link-to-liquidity-crisis-as-unsellable self
-      ][
-        set-state-for-bank self STATE-HEALTHY
-        mark-link-to-self-as-sellable self
-      ]
-    ]
-  ]
+;  ask turtles with [state != STATE-DEFAULT] [
+;    ifelse (is-under-default-risk self)[
+;      print (word "       Auditing bank " self " as default-state after final audit checks. Its neighbors will be looped through next iteration")
+;      set-state-for-bank self STATE-DEFAULT
+;      mark-link-to-default-bank-as-unsellable self
+;    ][
+;      ifelse (is-under-liquidity-risk self)[
+;        print (word "       Auditing bank " self " as liquidity-crisis after final audit checks. Its neighbors will be looped through next iteration")
+;        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+;        mark-link-to-liquidity-crisis-as-unsellable self
+;      ][
+;        set-state-for-bank self STATE-HEALTHY
+;        mark-link-to-self-as-sellable self
+;      ]
+;    ]
+;  ]
 
   ;; Procedura de mai jos este responsabila pentru
   ;:   - transformarea din active ilichide -> active lichide
@@ -1254,7 +1254,7 @@ number-of-banks
 number-of-banks
 2
 80
-32.0
+8.0
 1
 1
 NIL
@@ -1361,7 +1361,7 @@ max-connectivity-node-may-have
 max-connectivity-node-may-have
 0
 32
-32.0
+6.0
 1
 1
 NIL
@@ -1374,7 +1374,7 @@ BUTTON
 361
 go
 go
-T
+NIL
 1
 T
 OBSERVER
@@ -1547,13 +1547,113 @@ PENS
 "Deposits" 1.0 1 -2674135 true "" ""
 
 @#$#@#$#@
-## WHAT IS IT?
+# Ce este?
 
-The following program recreates the behavior of financial contagion described by Gai and Kapadia (2010). This model differs from the model described in the paper in that the user has the liberty to choose the number of banks in the network (in the original model, everything is randomly determined). This model assumes there are no fire sales (hence q = 1). Defaulted banks are represented by the color red, solvent banks are represented by the color blue.
+Scopul modelului este acela de a studia propagarea efectului de contagiune financiară în rețeaua bancară specifică României, fiind bazat pe modelul propus de către Gai și Kapadia (2010).
+ 
+Modelul reușește să cuprindă reglementările bancare existente la nivel național, prin actele normative deja în vigoare, cât și la nivel european **_(BRRD)_**, sau la nivel global **_(Basel III)_**. Astfel, pentru o perspectivă holistică a propagării efectului de contagiune financiară, modelul împletește mecanisme responsabile pentru asigurarea rezilienței bancare cu instrumentele de rezoluție bancară, în eventualitatea în care o instituție bancară se regăsește într-o criză de lichiditate sau într-o situație de dificultate majoră. 
 
-This first version runs one round of default simulation only, with banks of different sizes. Note that the main findings of the paper are not affected by allowing bank sizes to vary.
+Spre deosebire de modelele existente în literatura de specialitate, acest model introduce elemente distinctive, precum: **comportamentul deponenților, rata dobânzii, valoarea creditelor, maturizarea activelor cu lichiditate redusă, depozitele asigurate sau neasigurate, mecanisme de recapitalizare**_(bail-in)_ sau **intervenția Autorității de Rezoluție**_(Banca Națională a României)_.
 
-## THINGS TO NOTICE
+# Descrierea modelului
+
+## Scop
+
+Scopul modelului este descris de către investigarea gradului de reziliență al sistemului bancar românesc, alături de evaluarea eficienței mecanismelor și instrumentelor de reziliență bancară, implementate de către fiecare actor din rețeaua bancară din România.
+
+## Variabile
+
+Valorile variabilelor modelului dictează testarea ipotezei propuse, întrucât acestea influențează în mod direct valorile proprietăților agenților, dar și modul în care actorii sistemului bancar vor interacționa între ei. Astfel, variabilele modelului bazat pe agenți sunt:
+
+* **numărul de bănci**: Orice valoare în intervalul _[1; 32]_;
+* **conectivitatea fiecărui agent de tip instituție bancară**: Orice valoare în intervalul _[1; număr de bănci]_;
+* **agentul care declanșează efectul de contagiune financiară**: _Orice instituție financiar bancară, cea cu cifra de afaceri minimă_ sau _cea cu cifra de afaceri maximă_;
+* **rata de referință a depozitelor retrase**: Orice valoare în intervalul _[0; 10]_;
+* **rata depozitelor retrase în situație de panică**: Orice valoare în intervalul _[0; 100]_;
+* **creditele pe termen scurt raportate la creditele pe termen lung**: Orice valoare în intervalul _[0; 100]_;
+* **media și abaterea distribuției logaritmice a instituțiilor**: Orice valoare zecimală, _mai mare sau egală decât 0_;
+* **inițializarea modelului bazat pe agenți**;
+* **declanșarea simulării modelului bazat pe agenți**.
+
+## Tipuri de agenți și proprietățile acestora
+
+### Băncile
+
+Instituțiile bancare reprezintă principalul tip de agenți ai modelului propus. Având în vedere mecanismele și instrumentele impuse de către reglementările naționale, Basel III și BRRD, proprietățile agenților sunt:
+
+* **dimensiunea băncii**: Pune în evidență dimensiunea sau importanța băncii în cadrul rețelei bancare. Valorile posibile sunt descrise de către distribuția logaritmică de _**medie mu**_ și **_abatere sigma_**;
+* **stare**: Descrie starea curentă în care instituția financiar bancară se regăsește. Valorile posibile sunt: _stare normală_, _criză de lichiditate_ sau _insolvență_;
+* **active interbancare**: Exprimă valoarea creditelor acordate sau a activelor interbancare. Valorile posibile sunt: _0%_ sau _20%_ din **dimensiunea băncii**;
+* **active cu lichiditate redusă**: Exprimă valoarea activelor cu durată mare de lichiditate. Valorile posibile sunt: _50%_ sau _70%_ din **dimensiunea băncii**;
+* **active lichide**: Exprimă valoarea activelor lichide. Valoarea posibilă este de _30%_ din **dimensiunea băncii**;
+* **pasive interbancare**: Exprimă valoarea creditelor contractate a pasivelor interbancare. Valorile posibile sunt cuprinse în intervalul _[0; sumă credite contractate]_;
+* **depozite totale**: Marchează totalul depozitelor clienților. Valorile posibile sunt: _0_ sau _dimensiunea băncii – pasive interbancare_;
+* **depozite neasigurate ale companiilor de dimensiuni mici și mijlocii**: Valoarea este de _10%_ din **totalul depozitelor clienților**;
+* **depozite neasigurate ale companiilor de dimensiuni mari**: Valoarea este de _1%_ din **totalul depozitelor clienților**;
+* **depozite asigurate**: Reprezintă totalul valorii depozitelor garantate. Valoarea este de _89%_ din **totalul depozitelor clienților**;
+* **capitalurile proprii**: Valoarea este de _8%_ din **_totalul activelor instituției bancare_**;
+* **grad maxim de conectivitate**: Reprezintă conectivitatea maximă pe care acest actor bancar o poate atinge. Valorile posibile sunt cuprinse în intervalul _[0; 32]_;
+* **grad maxim de conectivitate atins**: Valorile posibile sunt _adevărat_ sau _fals_;
+* **total arce de intrare și ieșire**: Valorile posibile sunt cuprinse În intervalul _[0; 32]_;
+* **rata dobânzii**: Colecție de tip cheie-valoare cu valori posibile între _short - [1; 3]%_ sau _long - [3; 4]%_;
+* **venituri din rata dobânzii**: Marchează cu cât vor crește capitalurile proprii în urma creditelor acordate;
+* **cheltuieli cu rata dobânzii**: Descrie cu cât vor scădea capitalurile proprii în urma creditelor contractate.
+
+### Arcele
+
+Al doilea tip de agent este descris de către arcele de intrare și de ieșire ale fiecărei instituții bancare, întrucât acestea sunt responsabile pentru crearea interdependenței dintre actorii rețelei bancare. Așadar, proprietățile arcelor sunt exprimate de către rândurile de mai jos:
+
+* **valoarea creditului**: Valorile posibile sunt cuprinse în intervalul _(0; dimensiunea băncii)_;
+* **tipul creditului acordat**: Valorile posibile sunt: _termen scurt_ sau _termen lung_;
+* **rata dobânzii**: Valorile posibile sunt cuprinse în intervalul _[1; 4]%_;
+* **poate fi vândut**: Semnifică dacă acest portofoliu de active, constituind creditele acordate, poate fi vândut de către banca creditoare. Valorile posibile sunt: _adevărat_ sau _fals_.
+
+## Reguli de interacțiune per iterație
+
+În cadrul fiecărei iterații, actorii sistemului bancar vor acționa în funcție de un set specific de reguli, având în vedere starea în care se află, fiind totodată impactați și de către rata de retragere a depozitelor clienților. Aceste reguli sunt menite să urmărească nu doar reziliența rețelei bancare, ci și reziliența fiecărei instituții bancare parte a acestui sistem. Așadar, regulile de interacțiune sunt descrise de către pașii următori:
+
+  1. Proces de auditare intern orientat asupra fluxurilor financiare, în urma căruia, starea băncii poate fi schimbată;
+
+  2. Tranziția unei valori empirice de _2% din totalul activelor nelichide_ către _active lichide_;
+
+  3. Retragerea depozitelor clienților:
+
+    i) Dacă instituția bancară **nu este în vecinătatea unei bănci ce se află în default**, depozitele vor fi retrase având în vedere _rata de referință a depozitelor retrase_;
+    ii) Dacă instituția bancară **este în vecinătatea unei bănci ce se află în default**, depozitele vor fi retrase luând în considerare _rata depozitelor retrase în situație de panică_.
+
+  4. Dacă instituția financiar bancară este expusă unui risc de lichiditate redusă, aceasta va tranzacționa activele interbancare în vederea creșterii lichidității la un preț mai mic decât valoarea arcului, înregistrând pierderile, cât și câștigurile de lichidități. Arcul dintre instituția bancară ce va vinde o parte din portofoliul de active și instituția debitoare va fi marcat prin culoarea **galben**. 
+În mod reciproc, bilanțul contabil al instituției bancare dispusă să achiziționeze o parte din portofoliul de active al celei expuse riscului de lichiditate redusă va înregistra pierderi ale activelor lichide, dar o creștere mai mare a capitalurilor proprii. Un nou arc va fi creat între instituția ce a achiziționat o parte din portofoliul de active al băncii ce se află în criză de lichiditate și banca debitoare inițială, acest arc fiind reprezentat prin culoarea **verde**.
+
+  5. Dacă instituția bancară este într-o situație de dificultate majoră:
+
+     i) Aplicarea primului mecanism de recapitalizare - creditorii vor suferi pierderi egal proporționale; Capitalurile proprii vor crește;
+    ii) Aplicarea celui de-al doilea mecanism de recapitalizare, dacă primul nu a fost suficient pentru a asigura viabilitatea - depozitele neasigurate vor suferi pierderi:
+      a) Depozitele neasigurate ale companiilor de mari dimensiuni vor înregistra pierderi pentru asigurarea unui bilanț contabil pozitiv;
+      b) Dacă depozitele neasigurate ale companiilor de mari dimensiuni nu au fost suficiente pentru asigurarea viabilității instituției bancare, depozitele companiilor de dimensiuni mici și mijlocii vor înregistra pierderi în pofida creșterii capitalurilor proprii.
+    iii) Intervenția Autorității de Rezoluție bancară prin intervenția Fondului de Rezoluție Bancară, sub următoarele condiții:
+      a) Există fonduri suficiente;
+      b) Mecanismele de recapitalizare descrise de către punctele i) și ii) au absorbit minim _8%_ din totalul pasivelor;
+      c) Maxim _5%_ din totalul pasivelor și al capitalurilor proprii pot fi acoperite.
+
+  6. Re-evaluarea stării instituției bancare:
+
+    i) Dacă instituția bancară este în _stare normală_:
+      a) **banca** va fi reprezentată prin culoarea **albastră**; 
+      b) **arcele** vor fi marcate prin culoarea **gri**.
+
+    ii) Dacă instituția bancară se regăsește într-o stare de _criză de lichiditate_:
+      a) **banca** își va schimba culoarea în **portocaliu**;
+      b) **banca** își va schimba starea în **criză de lichiditate**;
+      c) **arcele orientate de intrare** vor fi exprimate prin culoarea **portocalie**;
+      d) **creanțele interbancare** deținute de către băncile creditoare, descrise prin arcele de intrare, **nu vor mai putea fi tranzacționate** de către acestea.
+
+
+    iii) Dacă instituția bancară se regăsește într-o stare de _insolvabilitate_:
+      a) **banca** își va schimba culoarea în **roșu**;
+      b) **banca** își va schimba starea în **defaulte**;
+      c) **arcele orientate de intrare** vor fi exprimate prin culoarea **roșie**;
+      d) **instituțiile creditoare** vor înregistra **pierderea**.
+### Băncile.
 
 To run the model, first setup the world (choose number of desired banks in the network, anywhere between 2 and 200). Adjust for mean and standard deviation of bank size to set up random distribution of bank sizes. The number next to each bank indicates its relative size.
 
