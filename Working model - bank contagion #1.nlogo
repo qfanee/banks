@@ -370,8 +370,15 @@ to cut-interbankassets-if-lent-towards-default [affected-bank]
       set updated-with-loss-interbank-assets (four-decimal (interbank-assets - total-asset-loss))
     ]
 
-    set equity four-decimal (equity - total-asset-loss)
+    let updated-with-loss-equity 0
+    ifelse (equity > total-asset-loss)[
+      set updated-with-loss-equity (four-decimal (equity - total-asset-loss))
+    ][
+      set updated-with-loss-equity 0
+    ]
+
     set interbank-assets updated-with-loss-interbank-assets
+    set equity updated-with-loss-equity
     print (word "     Interbank-assets: " initial-interbank-assets " -> " updated-with-loss-interbank-assets " | Equity: " initial-equity " -> " equity)
   ]
 end
@@ -667,7 +674,7 @@ to go
   ;; Se va verifica iterativ. Ex: A->B->C. tick1=vecinii lui B; tick2=vecinii lui C
   let affected-neighbors turtle-set [in-link-neighbors] of current-iteration-default-banks
 
-  print (word "Affected banks in this iteration: " [self] of affected-neighbors)
+  print (word "$$$$$$$$$$$$$$$Affected banks in this iteration: " [self] of affected-neighbors)
 
   ask affected-neighbors [
     print (word "################ VISITING TURTLE AFFECTED BY A DEFAULT ONE: " self)
@@ -1549,7 +1556,7 @@ PENS
 @#$#@#$#@
 # Ce este?
 
-Scopul modelului este acela de a studia propagarea efectului de contagiune financiară în rețeaua bancară specifică României, fiind bazat pe modelul propus de către Gai și Kapadia (2010).
+Scopul modelului este de a analiza propagarea efectului de contagiune financiară în rețeaua bancară specifică României, pornind de la cadrul conceptual propus de Gai și Kapadia (2010), dar extins și adaptat particularităților instituționale și de reglementare ale sistemului bancar național.
  
 Modelul reușește să cuprindă reglementările bancare existente la nivel național, prin actele normative deja în vigoare, cât și la nivel european **_(BRRD)_**, sau la nivel global **_(Basel III)_**. Astfel, pentru o perspectivă holistică a propagării efectului de contagiune financiară, modelul împletește mecanisme responsabile pentru asigurarea rezilienței bancare cu instrumentele de rezoluție bancară, în eventualitatea în care o instituție bancară se regăsește într-o criză de lichiditate sau într-o situație de dificultate majoră. 
 
@@ -1601,7 +1608,7 @@ Instituțiile bancare reprezintă principalul tip de agenți ai modelului propus
 
 ### Arcele
 
-Al doilea tip de agent este descris de către arcele de intrare și de ieșire ale fiecărei instituții bancare, întrucât acestea sunt responsabile pentru crearea interdependenței dintre actorii rețelei bancare. Așadar, proprietățile arcelor sunt exprimate de către rândurile de mai jos:
+În cadrul implementării în NetLogo, băncile sunt modelate ca agenți de tip turtle, în timp ce conexiunile interbancare sunt definite prin links . Astfel, deși la nivel economic agenții sunt exclusiv băncile, la nivel computațional modelul utilizează atât entități active de tip _turtle_, cât și legături de tip _link_, necesare pentru reprezentarea structurii rețelei. Astfel, arcele descriu relațiile financiare dintre bănci și contribuie la propagarea contagiunii în cadrul sistemului. Prin urmare, proprietățile arcelor sunt descrise prin următoarele caracteristici:
 
 * **valoarea creditului**: Valorile posibile sunt cuprinse în intervalul _(0; dimensiunea băncii)_;
 * **tipul creditului acordat**: Valorile posibile sunt: _termen scurt_ sau _termen lung_;
@@ -1612,19 +1619,18 @@ Al doilea tip de agent este descris de către arcele de intrare și de ieșire a
 
 În cadrul fiecărei iterații, actorii sistemului bancar vor acționa în funcție de un set specific de reguli, având în vedere starea în care se află, fiind totodată impactați și de către rata de retragere a depozitelor clienților. Aceste reguli sunt menite să urmărească nu doar reziliența rețelei bancare, ci și reziliența fiecărei instituții bancare parte a acestui sistem. Așadar, regulile de interacțiune sunt descrise de către pașii următori:
 
-  1. Proces de auditare intern orientat asupra fluxurilor financiare, în urma căruia, starea băncii poate fi schimbată;
 
-  2. Tranziția unei valori empirice de _2% din totalul activelor nelichide_ către _active lichide_;
+  1. Tranziția unei valori empirice de _2% din totalul activelor nelichide_ către _active lichide_;
 
-  3. Retragerea depozitelor clienților:
+  2. Retragerea depozitelor clienților:
 
     i) Dacă instituția bancară **nu este în vecinătatea unei bănci ce se află în default**, depozitele vor fi retrase având în vedere _rata de referință a depozitelor retrase_;
     ii) Dacă instituția bancară **este în vecinătatea unei bănci ce se află în default**, depozitele vor fi retrase luând în considerare _rata depozitelor retrase în situație de panică_.
 
-  4. Dacă instituția financiar bancară este expusă unui risc de lichiditate redusă, aceasta va tranzacționa activele interbancare în vederea creșterii lichidității la un preț mai mic decât valoarea arcului, înregistrând pierderile, cât și câștigurile de lichidități. Arcul dintre instituția bancară ce va vinde o parte din portofoliul de active și instituția debitoare va fi marcat prin culoarea **galben**. 
+  3. Dacă instituția financiar bancară este expusă unui risc de lichiditate redusă, aceasta va tranzacționa activele interbancare în vederea creșterii lichidității la un preț mai mic decât valoarea arcului, înregistrând pierderile, cât și câștigurile de lichidități. Arcul dintre instituția bancară ce va vinde o parte din portofoliul de active și instituția debitoare va fi marcat prin culoarea **galben**. 
 În mod reciproc, bilanțul contabil al instituției bancare dispusă să achiziționeze o parte din portofoliul de active al celei expuse riscului de lichiditate redusă va înregistra pierderi ale activelor lichide, dar o creștere mai mare a capitalurilor proprii. Un nou arc va fi creat între instituția ce a achiziționat o parte din portofoliul de active al băncii ce se află în criză de lichiditate și banca debitoare inițială, acest arc fiind reprezentat prin culoarea **verde**.
 
-  5. Dacă instituția bancară este într-o situație de dificultate majoră:
+  4. Dacă instituția bancară este într-o situație de dificultate majoră:
 
      i) Aplicarea primului mecanism de recapitalizare - creditorii vor suferi pierderi egal proporționale; Capitalurile proprii vor crește;
     ii) Aplicarea celui de-al doilea mecanism de recapitalizare, dacă primul nu a fost suficient pentru a asigura viabilitatea - depozitele neasigurate vor suferi pierderi:
@@ -1635,14 +1641,14 @@ Al doilea tip de agent este descris de către arcele de intrare și de ieșire a
       b) Mecanismele de recapitalizare descrise de către punctele i) și ii) au absorbit minim _8%_ din totalul pasivelor;
       c) Maxim _5%_ din totalul pasivelor și al capitalurilor proprii pot fi acoperite.
 
-  6. Re-evaluarea stării instituției bancare:
+  5. Proces de auditare intern orientat asupra fluxurilor financiare, în urma căruia, starea băncii poate fi schimbată:
 
     i) Dacă instituția bancară este în _stare normală_:
-      a) **banca** va fi reprezentată prin culoarea **albastră**; 
+      a) **banca** va fi reprezentată prin culoarea **albastru**; 
       b) **arcele** vor fi marcate prin culoarea **gri**.
 
     ii) Dacă instituția bancară se regăsește într-o stare de _criză de lichiditate_:
-      a) **banca** își va schimba culoarea în **portocaliu**;
+      a) **banca** își va schimba culoarea în **oranj**;
       b) **banca** își va schimba starea în **criză de lichiditate**;
       c) **arcele orientate de intrare** vor fi exprimate prin culoarea **portocalie**;
       d) **creanțele interbancare** deținute de către băncile creditoare, descrise prin arcele de intrare, **nu vor mai putea fi tranzacționate** de către acestea.
@@ -1653,23 +1659,21 @@ Al doilea tip de agent este descris de către arcele de intrare și de ieșire a
       b) **banca** își va schimba starea în **defaulte**;
       c) **arcele orientate de intrare** vor fi exprimate prin culoarea **roșie**;
       d) **instituțiile creditoare** vor înregistra **pierderea**.
-### Băncile.
 
-To run the model, first setup the world (choose number of desired banks in the network, anywhere between 2 and 200). Adjust for mean and standard deviation of bank size to set up random distribution of bank sizes. The number next to each bank indicates its relative size.
+# Cum se poate rula
 
-Then, default a single random bank by clicking on the button "Default Random Bank" only once. After this, hit the button "Go" to see the contagion chain effect. The model contains a graph that automatically plots the number of defaulted banks per time period. Hit "Go" again to stop the cycle once the plot shows that the number of defaults has come to an equilibrium.
+În funcție de ipotezele propuse, valori relevante vor fi furnizate parametrilor modelului în vederea testării ipotezei. Parametrii pentru care se așteaptă valori sunt descrise de către: _numărul de bănci, conectivitatea maximă a fiecărei bănci, rata de referință a depozitelor retrase, creditele pe termen scurt raportate la creditele pe termen lung, media și abaterea distribuției logaritmice_. Ulterior, utilizatorul trebuie să urmeze, în mod secvențial, următorul flux:
 
-## EXTENDING THE MODEL
+  1. Inițializarea modelului, prin apăsarea butonului _Setup_;
+  2. Introducerea șocului exogen, care va declanșa efectul de contagiune financiară, prin apăsarea oricărui dintre butoanele _cea mai mică bancă în default, cea mai mare bancă în default, o bancă aleatoare în default_;
+  3. Rularea simulării, prin apăsarea butonului _go_.
 
-Extensions of the model could include: sliders to choose the number of links (in order to adjust the parameter of interconnectedness "z"), making banks have different sizes, allow interbank assets not to be evenly distributed among incoming links. Please see other impemented versions.
+# Referințe
 
-## RELATED MODELS
-
--
-
-## CREDITS AND REFERENCES
-
-* Gai, Prasanna and Kapadia, Sujit, Contagion in Financial Networks (March 23, 2010). Bank of England Working Paper No. 383. Available at SSRN: http://ssrn.com/abstract=1577043 or http://dx.doi.org/10.2139/ssrn.1577043
+* Gai, Prasanna and Kapadia, Sujit, Contagion in Financial Networks (March 23, 2010). Bank of England Working Paper No. 383. http://ssrn.com/abstract=1577043 or http://dx.doi.org/10.2139/ssrn.1577043
+* Ionescu, Ș.; Chiriță, N.; Nica, I.; Delcea, C. An Analysis of Residual Financial Contagion in Romania’s Banking Market for Mortgage Loans. Sustainability 2023, 15, 12037. https://doi.org/10.3390/su151512037
+* Ionescu, Ş., Tătaru, G., Dumitrecu, G., Stanică, N.B., Cotfas, LA. (2025). Modeling Financial Contagion: Exploring Interconnectedness and Systemic Risk Through Agent-Based Simulation. In: Ciurea, C., Pocatilu, P., Filip, F.G. (eds) Proceedings of 23rd International Conference on Informatics in Economy (IE 2024). IE 2024. Smart Innovation, Systems and Technologies, vol 426. Springer, Singapore. https://doi.org/10.1007/978-981-96-0161-5_23
+* Ionescu, Ș.; Delcea, C; Nica, I. Modelling interbank contagion and liquidity stress: An agent-based network analysis for Romania. 5th International Workshop on Complexity in Innovation, Management, and Economics, 2026.
 @#$#@#$#@
 default
 true
