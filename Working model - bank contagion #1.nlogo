@@ -632,7 +632,7 @@ to go
       mark-link-to-default-bank-as-unsellable self
     ][
       ifelse (is-under-liquidity-risk self)[
-        print (word "       Auditing bank " self " as liquidity-crisis after final audit checks. Its neighbors will be looped through next iteration")
+        print (word "       Auditing bank " self " as liquidity-crisis after final audit checks.")
         set-state-for-bank self STATE-LIQUIDITY-CRISIS
         mark-link-to-liquidity-crisis-as-unsellable self
       ][
@@ -646,7 +646,7 @@ to go
   ;:   - transformarea din active ilichide -> active lichide
   ;;   - retragere depozite de catre clienti - 5% in conditii normale, withdrawal-rate% in conditii de stres (vecin cu o banca afectata)
   ask turtles with [state != STATE-DEFAULT] [
-
+    print (word " Maturing & pay deposits for " self)
     recover-maturity-from-iliquid-assets self
 
     let current-rate (four-decimal baseline-deposit-withdrawal-rate) ;; The baseline "healthy" withdrawal rate
@@ -654,9 +654,9 @@ to go
     ;; Setam rate-ul cu care depozitele vor fi retrase in functie de vecini - daca unul dintre vecini este DEFAULT, va interveni PANIC WITHDRAWAL
     ifelse any? out-link-neighbors with [state = STATE-DEFAULT] [
       set current-rate panic-deposit-withdrawal-rate
-      print (word "!!! PANIC withdrawals for " self ": " (four-decimal (current-rate * 100)) "% run due to neighbor default.")
+      print (word "   PANIC withdrawals for " self ": " (four-decimal (current-rate * 100)) "% run due to neighbor default.")
     ][
-      print (word "!!! NORMAL withdrawals for " self ": " (four-decimal (current-rate * 100)) "% run.")
+      print (word "   NORMAL withdrawals for " self ": " (four-decimal (current-rate * 100)) "% run.")
     ]
 
     ;; Procesul de retragere al depozitelor (daca activele lichide nu sunt suficiente, un prim proces de fire-sell-assets se va declansa aici)
@@ -665,78 +665,78 @@ to go
   ]
 
 
-  ;; Sursa infectiei pentru iteratia curenta, bazandu-ne pe rezultatul iteratiei precedente. (it1 = exogenous, vf vecini, it2 = vecini + cele care au intrat in default pe urma exogenous shock, it3 = ...)
-  let current-iteration-default-banks turtles with [state = STATE-DEFAULT and not member? self visited-default-banks]
-  print (word "Default banks in this iteration: " [self] of current-iteration-default-banks)
-
-  ;; Ar trebui sa verificam doar vecinii bancii care intra in default in iteratia precedenta. Ulterior, daca exista alte banci ce intra in default dupa ce primii vecini au fost verificati, acestia se vor parcurge
-  ;; Verificam cei mai apropiati 'vecini' pentru a observa daca acestia sunt in risc de criza lichididate/default, daca cel 'curent' a intrat in default.
-  ;; Se va verifica iterativ. Ex: A->B->C. tick1=vecinii lui B; tick2=vecinii lui C
-  let affected-neighbors turtle-set [in-link-neighbors] of current-iteration-default-banks
-
-  print (word "$$$$$$$$$$$$$$$Affected banks in this iteration: " [self] of affected-neighbors)
-
-  ask affected-neighbors [
-    print (word "################ VISITING TURTLE AFFECTED BY A DEFAULT ONE: " self)
-
-    let all-neighbors-of-affected-bank link-neighbors
-    print (word "   Affected bank " self " is connected to a total of: " all-neighbors-of-affected-bank)
-
-    cut-interbankassets-if-lent-towards-default self
-
-    ;; Verificare initiala impotriva unei eventuale crize de lichiditati + actionare in situatie de criza
-    ifelse (is-under-liquidity-risk self)[
-      print(word "       Is under liquidity-risk? TRUE")
-      print(word "~~~~~~~ Triggering fire-asset-sell ~~~~~~~")
-      sell-granted-loans self
-    ][
-      print(word "       Is under liquidity-risk? FALSE \n")
-    ]
-
-    ;; Verificare ulterioara daca banca inca se afla in starea unei crize de lichiditati. Daca da, ii schimbam starea si marcam imprumuturile contractate ca fiind 'nesigure' pentru potentiali cumparatori
-    ifelse (is-under-liquidity-risk self)[
-      print (word "       Still under liquidity risk? TRUE")
-      set-state-for-bank self STATE-LIQUIDITY-CRISIS
-      mark-link-to-liquidity-crisis-as-unsellable self
-    ][
-      ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
-      print (word "       Still under liquidity risk? FALSE. Setting state for bank as: " STATE-HEALTHY)
-      set-state-for-bank self STATE-HEALTHY
-      mark-link-to-self-as-sellable self
-    ]
-
-    ; Verificare initiala impotriva insolventei + actionare in situatie de default.
-    ifelse (is-under-default-risk self)[
-      print(word "       Is under default-risk? TRUE")
-      print(word "~~~~~~~ Triggering regulatory processes ~~~~~~~")
-      try-to-cascade-mitigate-default self
-    ][
-      print(word "       Is under default-risk? FALSE \n")
-    ]
-
-    ;; Verificare ulterioara daca banca inca se afla in starea de default. Daca da, ii schimbam starea si marcam ca fiind imprumuturile contractate ca fiind 'nesigure' pentur potentiali cumparatori.
-    ifelse (is-under-default-risk self)[
-      print (word "       Still under default risk? TRUE")
-      set-state-for-bank self STATE-DEFAULT
-      mark-link-to-default-bank-as-unsellable self
-    ][
-      print(word "       Still under default risk? FALSE")
-      if (is-under-liquidity-risk self)[
-        set-state-for-bank self STATE-LIQUIDITY-CRISIS
-        mark-link-to-liquidity-crisis-as-unsellable self
-      ]
-    ]
-  ]
-
-  ;; 'Impingem' toate bancile ce au fost in default in iteratia curenta ca fiind deja 'vizitate' de catre vecinii acestora.
-  ask current-iteration-default-banks [
-    set visited-default-banks lput self visited-default-banks
-    set defaulted-this-iteration lput self defaulted-this-iteration
-    set-state-for-bank self STATE-DEFAULT
-    mark-link-to-default-bank-as-unsellable self
-  ]
-
-  print(word "Defaulted-this-iteration: " defaulted-this-iteration)
+;  ;; Sursa infectiei pentru iteratia curenta, bazandu-ne pe rezultatul iteratiei precedente. (it1 = exogenous, vf vecini, it2 = vecini + cele care au intrat in default pe urma exogenous shock, it3 = ...)
+;  let current-iteration-default-banks turtles with [state = STATE-DEFAULT and not member? self visited-default-banks]
+;  print (word "Default banks in this iteration: " [self] of current-iteration-default-banks)
+;
+;  ;; Ar trebui sa verificam doar vecinii bancii care intra in default in iteratia precedenta. Ulterior, daca exista alte banci ce intra in default dupa ce primii vecini au fost verificati, acestia se vor parcurge
+;  ;; Verificam cei mai apropiati 'vecini' pentru a observa daca acestia sunt in risc de criza lichididate/default, daca cel 'curent' a intrat in default.
+;  ;; Se va verifica iterativ. Ex: A->B->C. tick1=vecinii lui B; tick2=vecinii lui C
+;  let affected-neighbors turtle-set [in-link-neighbors] of current-iteration-default-banks
+;
+;  print (word "$$$$$$$$$$$$$$$Affected banks in this iteration: " [self] of affected-neighbors)
+;
+;  ask affected-neighbors [
+;    print (word "################ VISITING TURTLE AFFECTED BY A DEFAULT ONE: " self)
+;
+;    let all-neighbors-of-affected-bank link-neighbors
+;    print (word "   Affected bank " self " is connected to a total of: " all-neighbors-of-affected-bank)
+;
+;    cut-interbankassets-if-lent-towards-default self
+;
+;    ;; Verificare initiala impotriva unei eventuale crize de lichiditati + actionare in situatie de criza
+;    ifelse (is-under-liquidity-risk self)[
+;      print(word "       Is under liquidity-risk? TRUE")
+;      print(word "~~~~~~~ Triggering fire-asset-sell ~~~~~~~")
+;      sell-granted-loans self
+;    ][
+;      print(word "       Is under liquidity-risk? FALSE \n")
+;    ]
+;
+;    ;; Verificare ulterioara daca banca inca se afla in starea unei crize de lichiditati. Daca da, ii schimbam starea si marcam imprumuturile contractate ca fiind 'nesigure' pentru potentiali cumparatori
+;    ifelse (is-under-liquidity-risk self)[
+;      print (word "       Still under liquidity risk? TRUE")
+;      set-state-for-bank self STATE-LIQUIDITY-CRISIS
+;      mark-link-to-liquidity-crisis-as-unsellable self
+;    ][
+;      ;; Daca banca curenta nu se mai afla in risc de lichiditate, dam revert la imprumuturile contractate - marcand banca curenta ca fiind 'sanatoasa'
+;      print (word "       Still under liquidity risk? FALSE. Setting state for bank as: " STATE-HEALTHY)
+;      set-state-for-bank self STATE-HEALTHY
+;      mark-link-to-self-as-sellable self
+;    ]
+;
+;    ; Verificare initiala impotriva insolventei + actionare in situatie de default.
+;    ifelse (is-under-default-risk self)[
+;      print(word "       Is under default-risk? TRUE")
+;      print(word "~~~~~~~ Triggering regulatory processes ~~~~~~~")
+;      try-to-cascade-mitigate-default self
+;    ][
+;      print(word "       Is under default-risk? FALSE \n")
+;    ]
+;
+;    ;; Verificare ulterioara daca banca inca se afla in starea de default. Daca da, ii schimbam starea si marcam ca fiind imprumuturile contractate ca fiind 'nesigure' pentur potentiali cumparatori.
+;    ifelse (is-under-default-risk self)[
+;      print (word "       Still under default risk? TRUE")
+;      set-state-for-bank self STATE-DEFAULT
+;      mark-link-to-default-bank-as-unsellable self
+;    ][
+;      print(word "       Still under default risk? FALSE")
+;      if (is-under-liquidity-risk self)[
+;        set-state-for-bank self STATE-LIQUIDITY-CRISIS
+;        mark-link-to-liquidity-crisis-as-unsellable self
+;      ]
+;    ]
+;  ]
+;
+;  ;; 'Impingem' toate bancile ce au fost in default in iteratia curenta ca fiind deja 'vizitate' de catre vecinii acestora.
+;  ask current-iteration-default-banks [
+;    set visited-default-banks lput self visited-default-banks
+;    set defaulted-this-iteration lput self defaulted-this-iteration
+;    set-state-for-bank self STATE-DEFAULT
+;    mark-link-to-default-bank-as-unsellable self
+;  ]
+;
+;  print(word "Defaulted-this-iteration: " defaulted-this-iteration)
 
  if ticks = 50 [stop]
  if ( (count turtles with [state = STATE-DEFAULT]) = number-of-banks) [
@@ -757,14 +757,13 @@ to recover-maturity-from-iliquid-assets [bank]
 
     ;; Actualizam activele + equity
     if matured-amount > 0 [
+      ;; Dobanda va fi marcata ca fiind o crestere in equity si active lichide
+      let interest-income four-decimal (0.01 * matured-amount)
+
       set illiquid-assets (four-decimal (illiquid-assets - matured-amount))
-      set liquid-assets (four-decimal (liquid-assets + matured-amount))
-
-      ;; Dobanda va fi marcata ca fiind o crestere in equity.
-      let net-interest-margin 0.01
-      set equity (four-decimal (equity + (matured-amount * net-interest-margin)))
+      set liquid-assets (four-decimal (liquid-assets + matured-amount + interest-income))
+      set equity (four-decimal (equity + interest-income))
     ]
-
     print (word "   Illiquid-assets have matured. Illiquid-assets: " initial-illiquid-assets " -> " illiquid-assets " | Liquid-assets: " initial-liquid-assets " -> " liquid-assets)
   ]
 end
